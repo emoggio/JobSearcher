@@ -16,7 +16,8 @@ SCORE_PROMPT = """You are an expert recruiter and hiring manager.
 
 Given the candidate's CV profile and a job description, return a JSON object with:
 - score: integer 0-100 representing the % likelihood this candidate would get an interview
-- reason: one sentence explaining the score
+- reason: one sentence explaining why (strengths)
+- suggestion: one concrete sentence on what to tweak in the CV to improve fit
 
 Be realistic and strict. Consider: seniority match, skills overlap, industry fit, location, salary alignment.
 
@@ -29,10 +30,11 @@ Company: {company}
 Location: {location}
 Description: {description}
 
-Respond with valid JSON only. Example: {{"score": 72, "reason": "Strong delivery background but lacks client-facing consulting experience."}}"""
+Respond with valid JSON only. Example:
+{{"score": 72, "reason": "Strong delivery governance and stakeholder management align well.", "suggestion": "Lead with client-facing experience and downplay gaming context in your summary."}}"""
 
 
-async def score_single_job(job: Job, cv_text: str) -> float:
+async def score_single_job(job: Job, cv_text: str) -> dict:
     prompt = SCORE_PROMPT.format(
         cv=cv_text,
         title=job.title,
@@ -47,9 +49,13 @@ async def score_single_job(job: Job, cv_text: str) -> float:
     )
     try:
         data = json.loads(response.content[0].text)
-        return float(data.get("score", 0))
+        return {
+            "score": float(data.get("score", 0)),
+            "reason": data.get("reason", ""),
+            "suggestion": data.get("suggestion", ""),
+        }
     except Exception:
-        return 0.0
+        return {"score": 0.0, "reason": "", "suggestion": ""}
 
 
 async def score_jobs(db: AsyncSession, job_ids: list[str] | None = None):
@@ -67,6 +73,9 @@ async def score_jobs(db: AsyncSession, job_ids: list[str] | None = None):
     jobs = result.scalars().all()
 
     for job in jobs:
-        job.compatibility_score = await score_single_job(job, cv_text)
+        result = await score_single_job(job, cv_text)
+        job.compatibility_score = result["score"]
+        job.score_reason = result["reason"]
+        job.score_suggestion = result["suggestion"]
 
     await db.commit()

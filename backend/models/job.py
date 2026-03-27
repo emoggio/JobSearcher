@@ -22,5 +22,7 @@ class Job(Base):
     date_posted = Column(DateTime)
     date_scraped = Column(DateTime, server_default=func.now())
     compatibility_score = Column(Float)   # 0–100
+    score_reason = Column(String)         # one-line AI explanation
+    score_suggestion = Column(String)     # one-line tailoring tip
     is_active = Column(Boolean, default=True)
     is_gaming = Column(Boolean, default=False)

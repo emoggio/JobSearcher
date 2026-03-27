@@ -2,6 +2,7 @@
 Orchestrates job scraping across all sources, deduplicates, and stores results.
 """
 import asyncio
+import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from backend.models.job import Job
@@ -51,9 +52,12 @@ async def run_search(db: AsyncSession):
             if job_data.get("url") in existing_urls:
                 continue
             if not job_data.get("salary_min") and not job_data.get("salary_max"):
-                estimated = await estimate_salary(job_data)
-                job_data.update(estimated)
-                job_data["salary_estimated"] = True
+                try:
+                    estimated = await estimate_salary(job_data)
+                    job_data.update(estimated)
+                    job_data["salary_estimated"] = True
+                except Exception:
+                    job_data["salary_estimated"] = False
 
             job = Job(**job_data, is_gaming=is_gaming(job_data))
             db.add(job)
@@ -62,7 +66,10 @@ async def run_search(db: AsyncSession):
 
     await db.commit()
 
-    if new_jobs:
-        await score_jobs(db)
+    if new_jobs and os.getenv("ANTHROPIC_API_KEY"):
+        try:
+            await score_jobs(db)
+        except Exception:
+            pass
 
     return len(new_jobs)
