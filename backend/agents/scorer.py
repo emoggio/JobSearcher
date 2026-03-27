@@ -2,6 +2,7 @@
 Scores jobs against the user's CV using Claude.
 Returns a compatibility % (0–100) representing interview likelihood.
 """
+import asyncio
 import json
 import logging
 import os
@@ -80,15 +81,19 @@ async def score_jobs(db: AsyncSession, job_ids: list[str] | None = None):
     if not jobs:
         return
 
-    logger.info("Scoring %d jobs…", len(jobs))
-    for job in jobs:
-        try:
-            result = await score_single_job(job, cv_text)
-            job.compatibility_score = result["score"]
-            job.score_reason = result["reason"]
-            job.score_suggestion = result["suggestion"]
-        except Exception as e:
-            logger.warning("Scoring failed for job %s (%s): %s", job.id, job.title, e)
+    logger.info("Scoring %d jobs concurrently…", len(jobs))
+    sem = asyncio.Semaphore(5)  # max 5 parallel Claude calls
 
+    async def score_one(job: Job):
+        async with sem:
+            try:
+                result = await score_single_job(job, cv_text)
+                job.compatibility_score = result["score"]
+                job.score_reason = result["reason"]
+                job.score_suggestion = result["suggestion"]
+            except Exception as e:
+                logger.warning("Scoring failed for job %s (%s): %s", job.id, job.title, e)
+
+    await asyncio.gather(*[score_one(j) for j in jobs])
     await db.commit()
     logger.info("Scoring complete")

@@ -57,7 +57,8 @@ async def run_search(db: AsyncSession) -> int:
         row[0] for row in (await db.execute(select(Job.url))).all() if row[0]
     )
 
-    new_jobs: list[Job] = []
+    # Collect all new raw job dicts first
+    raw_new: list[dict] = []
     for source_module, source_result in zip(SOURCES, results):
         if isinstance(source_result, Exception):
             logger.warning("Source %s failed: %s", source_module.__name__, source_result)
@@ -66,22 +67,33 @@ async def run_search(db: AsyncSession) -> int:
             url = job_data.get("url")
             if not url or url in existing_urls:
                 continue
-
-            if not job_data.get("salary_min") and not job_data.get("salary_max"):
-                try:
-                    estimated = await estimate_salary(job_data)
-                    # Only copy known salary fields — drop 'currency' etc.
-                    job_data["salary_min"] = estimated.get("salary_min")
-                    job_data["salary_max"] = estimated.get("salary_max")
-                    job_data["salary_estimated"] = True
-                except Exception as e:
-                    logger.warning("Salary estimation failed for '%s': %s", job_data.get("title"), e)
-                    job_data["salary_estimated"] = False
-
-            job = Job(**_safe_job_fields(job_data), is_gaming=is_gaming(job_data))
-            db.add(job)
-            new_jobs.append(job)
+            raw_new.append(job_data)
             existing_urls.add(url)
+
+    # Estimate missing salaries concurrently
+    sal_sem = asyncio.Semaphore(5)
+
+    async def maybe_estimate(job_data: dict):
+        if job_data.get("salary_min") or job_data.get("salary_max"):
+            return
+        async with sal_sem:
+            try:
+                est = await estimate_salary(job_data)
+                job_data["salary_min"] = est.get("salary_min")
+                job_data["salary_max"] = est.get("salary_max")
+                job_data["salary_estimated"] = True
+            except Exception as e:
+                logger.warning("Salary estimation failed for '%s': %s", job_data.get("title"), e)
+                job_data["salary_estimated"] = False
+
+    if os.getenv("ANTHROPIC_API_KEY") and raw_new:
+        await asyncio.gather(*[maybe_estimate(j) for j in raw_new])
+
+    new_jobs: list[Job] = []
+    for job_data in raw_new:
+        job = Job(**_safe_job_fields(job_data), is_gaming=is_gaming(job_data))
+        db.add(job)
+        new_jobs.append(job)
 
     if new_jobs:
         await db.commit()
