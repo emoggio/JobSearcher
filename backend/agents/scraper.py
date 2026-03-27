@@ -2,13 +2,16 @@
 Orchestrates job scraping across all sources, deduplicates, and stores results.
 """
 import asyncio
+import logging
 import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from backend.models.job import Job
 from backend.agents.scorer import score_jobs
 from backend.agents.salary_estimator import estimate_salary
-from backend.sources import linkedin, indeed, reed, adzuna, glassdoor, totaljobs
+from backend.sources import linkedin, indeed, reed, adzuna, glassdoor, totaljobs, cwjobs
+
+logger = logging.getLogger(__name__)
 
 GAMING_KEYWORDS = {
     "game", "games", "gaming", "esports", "e-sports", "epic games",
@@ -16,7 +19,10 @@ GAMING_KEYWORDS = {
     "riot games", "valve", "unity technologies", "unreal",
 }
 
-SOURCES = [linkedin, indeed, reed, adzuna, glassdoor, totaljobs]
+SOURCES = [linkedin, indeed, reed, adzuna, glassdoor, totaljobs, cwjobs]
+
+# Keys returned by salary_estimator that don't map to Job columns
+_SALARY_EXTRA_KEYS = {"currency"}
 
 SEARCH_PARAMS = {
     "keywords": (
@@ -35,41 +41,56 @@ def is_gaming(job_data: dict) -> bool:
     return any(kw in text for kw in GAMING_KEYWORDS)
 
 
-async def run_search(db: AsyncSession):
+def _safe_job_fields(job_data: dict) -> dict:
+    """Strip any keys that don't exist on the Job model."""
+    from sqlalchemy import inspect
+    valid = {c.key for c in inspect(Job).mapper.column_attrs}
+    return {k: v for k, v in job_data.items() if k in valid}
+
+
+async def run_search(db: AsyncSession) -> int:
     """Scrape all sources, deduplicate by URL, persist new jobs, then score."""
     tasks = [source.scrape(SEARCH_PARAMS) for source in SOURCES]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    existing_urls = set(
-        row[0] for row in (await db.execute(select(Job.url))).all()
+    existing_urls: set[str] = set(
+        row[0] for row in (await db.execute(select(Job.url))).all() if row[0]
     )
 
-    new_jobs = []
-    for source_results in results:
-        if isinstance(source_results, Exception):
+    new_jobs: list[Job] = []
+    for source_module, source_result in zip(SOURCES, results):
+        if isinstance(source_result, Exception):
+            logger.warning("Source %s failed: %s", source_module.__name__, source_result)
             continue
-        for job_data in source_results:
-            if job_data.get("url") in existing_urls:
+        for job_data in source_result:
+            url = job_data.get("url")
+            if not url or url in existing_urls:
                 continue
+
             if not job_data.get("salary_min") and not job_data.get("salary_max"):
                 try:
                     estimated = await estimate_salary(job_data)
-                    job_data.update(estimated)
+                    # Only copy known salary fields — drop 'currency' etc.
+                    job_data["salary_min"] = estimated.get("salary_min")
+                    job_data["salary_max"] = estimated.get("salary_max")
                     job_data["salary_estimated"] = True
-                except Exception:
+                except Exception as e:
+                    logger.warning("Salary estimation failed for '%s': %s", job_data.get("title"), e)
                     job_data["salary_estimated"] = False
 
-            job = Job(**job_data, is_gaming=is_gaming(job_data))
+            job = Job(**_safe_job_fields(job_data), is_gaming=is_gaming(job_data))
             db.add(job)
             new_jobs.append(job)
-            existing_urls.add(job_data.get("url"))
+            existing_urls.add(url)
 
-    await db.commit()
+    if new_jobs:
+        await db.commit()
+        logger.info("Saved %d new jobs", len(new_jobs))
 
     if new_jobs and os.getenv("ANTHROPIC_API_KEY"):
         try:
             await score_jobs(db)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Scoring pass failed: %s", e)
 
     return len(new_jobs)

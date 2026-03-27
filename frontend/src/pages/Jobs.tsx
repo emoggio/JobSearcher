@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, ExternalLink, Star, Clock, Loader2, ChevronDown, Lightbulb, CheckCircle2 } from "lucide-react";
-import { listJobs, searchJobs, createApplication, tweakCV } from "../api";
+import { Search, ExternalLink, Star, Clock, Loader2, ChevronDown, Lightbulb, CheckCircle2, Link, ScrollText } from "lucide-react";
+import { listJobs, searchJobs, createApplication, tweakCV, importJobUrl, getLogs } from "../api";
 import api from "../api";
 import { formatDistanceToNow } from "date-fns";
 
@@ -40,6 +40,9 @@ export default function Jobs() {
   const [searchSources, setSearchSources] = useState<string[]>([]);
   const [tweak, setTweak] = useState<{ text: string } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [importUrl, setImportUrl] = useState("");
+  const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
 
   // Close industry dropdown on outside click
   useEffect(() => {
@@ -78,6 +81,17 @@ export default function Jobs() {
     mutationFn: () => searchJobs(),
     onSuccess: () => { setSearchRunning(true); setSearchSources(["linkedin"]); },
   });
+
+  const { mutate: importUrl_mutate, isPending: importing } = useMutation({
+    mutationFn: (url: string) => importJobUrl(url),
+    onSuccess: () => { setImportUrl(""); qc.invalidateQueries({ queryKey: ["jobs"] }); },
+  });
+
+  async function openLogs() {
+    const { data } = await getLogs(150);
+    setLogs(data.lines);
+    setShowLogs(true);
+  }
 
   const { mutate: apply, variables: applyingId } = useMutation({
     mutationFn: (jobId: string) => createApplication(jobId),
@@ -118,6 +132,38 @@ export default function Jobs() {
           {searchRunning ? "Searching…" : "Search Now"}
         </button>
       </div>
+
+      {/* URL import bar */}
+      <form
+        onSubmit={(e) => { e.preventDefault(); if (importUrl.trim()) importUrl_mutate(importUrl.trim()); }}
+        className="flex gap-2"
+      >
+        <div className="flex-1 flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 focus-within:border-indigo-500 transition-colors">
+          <Link size={14} className="text-gray-500 shrink-0" />
+          <input
+            type="url"
+            value={importUrl}
+            onChange={(e) => setImportUrl(e.target.value)}
+            placeholder="Paste a job URL to import (LinkedIn, company site, any board…)"
+            className="flex-1 bg-transparent text-sm outline-none placeholder-gray-600"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={importing || !importUrl.trim()}
+          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 rounded-lg text-sm transition-colors shrink-0"
+        >
+          {importing ? <Loader2 size={14} className="animate-spin" /> : "Import"}
+        </button>
+        <button
+          type="button"
+          onClick={openLogs}
+          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors shrink-0"
+          title="View logs"
+        >
+          <ScrollText size={14} />
+        </button>
+      </form>
 
       {/* Live search progress */}
       {searchRunning && (
@@ -313,6 +359,29 @@ export default function Jobs() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Log drawer */}
+      {showLogs && (
+        <div className="fixed inset-0 bg-black/70 flex items-end justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-3xl max-h-[70vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800">
+              <h3 className="font-semibold text-sm flex items-center gap-2"><ScrollText size={14} /> Logs</h3>
+              <button onClick={() => setShowLogs(false)} className="text-gray-400 hover:text-white text-lg leading-none">✕</button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 font-mono text-xs text-gray-400 space-y-0.5">
+              {logs.length === 0 ? (
+                <p className="text-gray-600">No logs yet.</p>
+              ) : (
+                logs.map((line, i) => (
+                  <p key={i} className={line.includes("[WARNING]") || line.includes("[ERROR]") ? "text-red-400" : line.includes("complete") || line.includes("Saved") ? "text-emerald-400" : ""}>
+                    {line}
+                  </p>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
 

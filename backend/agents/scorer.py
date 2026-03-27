@@ -3,6 +3,7 @@ Scores jobs against the user's CV using Claude.
 Returns a compatibility % (0–100) representing interview likelihood.
 """
 import json
+import logging
 import os
 from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from sqlalchemy import select
 from backend.models.job import Job
 from backend.agents.cv_tweaker import get_current_cv
 
+logger = logging.getLogger(__name__)
 client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 SCORE_PROMPT = """You are an expert recruiter and hiring manager.
@@ -54,28 +56,39 @@ async def score_single_job(job: Job, cv_text: str) -> dict:
             "reason": data.get("reason", ""),
             "suggestion": data.get("suggestion", ""),
         }
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to parse score response for job %s: %s", job.id, e)
         return {"score": 0.0, "reason": "", "suggestion": ""}
 
 
 async def score_jobs(db: AsyncSession, job_ids: list[str] | None = None):
     cv_profile = await get_current_cv()
     if not cv_profile:
+        logger.info("No CV found — skipping scoring")
         return
 
     cv_text = json.dumps(cv_profile)
 
-    query = select(Job).where(Job.compatibility_score == None)  # noqa: E711
     if job_ids:
         query = select(Job).where(Job.id.in_(job_ids))
+    else:
+        query = select(Job).where(Job.compatibility_score == None)  # noqa: E711
 
     result = await db.execute(query)
     jobs = result.scalars().all()
 
+    if not jobs:
+        return
+
+    logger.info("Scoring %d jobs…", len(jobs))
     for job in jobs:
-        result = await score_single_job(job, cv_text)
-        job.compatibility_score = result["score"]
-        job.score_reason = result["reason"]
-        job.score_suggestion = result["suggestion"]
+        try:
+            result = await score_single_job(job, cv_text)
+            job.compatibility_score = result["score"]
+            job.score_reason = result["reason"]
+            job.score_suggestion = result["suggestion"]
+        except Exception as e:
+            logger.warning("Scoring failed for job %s (%s): %s", job.id, job.title, e)
 
     await db.commit()
+    logger.info("Scoring complete")

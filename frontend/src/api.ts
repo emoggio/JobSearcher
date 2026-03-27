@@ -26,6 +26,12 @@ export const listRecruiters = () => api.get("/api/recruiters");
 // Calendar
 export const getCalendar = () => api.get("/api/calendar");
 
+// Import job from URL
+export const importJobUrl = (url: string) => api.post("/api/jobs/import", { url });
+
+// Logs
+export const getLogs = (lines = 100) => api.get("/api/logs", { params: { lines } });
+
 // CV
 export const uploadCV = (file: File) => {
   const form = new FormData();

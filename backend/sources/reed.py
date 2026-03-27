@@ -1,8 +1,22 @@
 """Reed.co.uk scraper — uses official REST API."""
+import logging
 import os
 import httpx
 import base64
+from datetime import datetime
 from backend.sources._base import parse_date
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_reed_date(value: str | None) -> datetime | None:
+    """Reed returns ISO 8601 strings, not relative text."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value[:19])
+    except Exception:
+        return parse_date(value)
 
 API_KEY = os.getenv("REED_API_KEY", "")
 BASE = "https://www.reed.co.uk/api/1.0/search"
@@ -36,7 +50,7 @@ async def scrape(params: dict) -> list[dict]:
             "source": "reed",
             "salary_min": item.get("minimumSalary"),
             "salary_max": item.get("maximumSalary"),
-            "date_posted": parse_date(item.get("date", "")),
+            "date_posted": _parse_reed_date(item.get("date")),
             "remote": item.get("locationName", "").lower() == "remote",
         })
     return jobs

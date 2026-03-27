@@ -1,7 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from backend.logging_config import setup_logging, LOG_PATH
 from backend.db.database import init_db
 from backend.api import jobs, cv, recruiters, applications, calendar, form
+
+setup_logging()
 
 app = FastAPI(title="Scout", version="1.0.0")
 
@@ -28,3 +31,14 @@ async def startup():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/logs")
+async def get_logs(lines: int = 100):
+    """Return the last N lines of the log file."""
+    try:
+        text = LOG_PATH.read_text(encoding="utf-8", errors="replace")
+        all_lines = text.splitlines()
+        return {"lines": all_lines[-lines:]}
+    except FileNotFoundError:
+        return {"lines": []}

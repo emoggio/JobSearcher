@@ -1,31 +1,36 @@
 """
 Parses the uploaded CV and tailors it for specific job descriptions using Claude.
 """
+import glob
 import json
+import logging
 import os
+from pathlib import Path
 from anthropic import AsyncAnthropic
 from sqlalchemy import select
 from backend.db.database import SessionLocal
 from backend.models.job import Job
 
+logger = logging.getLogger(__name__)
 client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-CV_CACHE_PATH = "cv/parsed.json"
+
+# Anchor paths to repo root (two levels up from this file: agents/ -> backend/ -> root)
+_ROOT = Path(__file__).resolve().parent.parent.parent
+CV_DIR = _ROOT / "cv"
+CV_CACHE_PATH = CV_DIR / "parsed.json"
 
 
-def find_cv_pdf() -> str | None:
+def find_cv_pdf() -> Path | None:
     """Find the first PDF in the cv/ folder regardless of filename."""
-    import glob
-    pdfs = glob.glob("cv/*.pdf")
+    pdfs = list(CV_DIR.glob("*.pdf"))
     return pdfs[0] if pdfs else None
 
 
 async def parse_cv(cv_path: str) -> dict:
     """Extract structured profile from PDF CV using Claude."""
-    with open(cv_path, "rb") as f:
-        pdf_bytes = f.read()
-
     import base64
-    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+    with open(cv_path, "rb") as f:
+        pdf_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
 
     response = await client.messages.create(
         model="claude-sonnet-4-6",
@@ -53,16 +58,15 @@ async def parse_cv(cv_path: str) -> dict:
     )
 
     parsed = json.loads(response.content[0].text)
-    os.makedirs("cv", exist_ok=True)
-    with open(CV_CACHE_PATH, "w") as f:
-        json.dump(parsed, f, indent=2)
+    CV_DIR.mkdir(exist_ok=True)
+    CV_CACHE_PATH.write_text(json.dumps(parsed, indent=2))
+    logger.info("CV parsed and cached")
     return parsed
 
 
 async def get_current_cv() -> dict | None:
-    if os.path.exists(CV_CACHE_PATH):
-        with open(CV_CACHE_PATH) as f:
-            return json.load(f)
+    if CV_CACHE_PATH.exists():
+        return json.loads(CV_CACHE_PATH.read_text())
     return None
 
 
