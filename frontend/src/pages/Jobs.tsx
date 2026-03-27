@@ -55,6 +55,16 @@ export default function Jobs() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // On mount: reconnect to any search already running on the server
+  useEffect(() => {
+    api.get("/api/jobs/status").then(({ data }) => {
+      if (data.running) {
+        setSearchRunning(true);
+        setSearchSources(["linkedin"]);
+      }
+    }).catch(() => {});
+  }, []);
+
   // Poll status while searching
   useEffect(() => {
     if (!searchRunning) return;
