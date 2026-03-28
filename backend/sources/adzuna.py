@@ -10,6 +10,11 @@ BASE = "https://api.adzuna.com/v1/api/jobs/gb/search/1"
 
 async def scrape(params: dict) -> list[dict]:
     if not APP_ID or not API_KEY:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Adzuna: ADZUNA_APP_ID / ADZUNA_API_KEY not set in .env — "
+            "register free at https://developer.adzuna.com to enable this source"
+        )
         return []
 
     async with httpx.AsyncClient(timeout=30) as client:

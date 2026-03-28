@@ -1,4 +1,8 @@
-"""Glassdoor scraper using Playwright sync API in a thread pool."""
+"""
+Glassdoor scraper using Playwright.
+Note: Glassdoor uses heavy bot-detection (Cloudflare + login walls).
+This scraper works occasionally from residential IPs but will often return 0.
+"""
 import asyncio
 import logging
 import urllib.parse
@@ -6,8 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from backend.sources._base import clean_salary
 
 logger = logging.getLogger(__name__)
-_executor = ThreadPoolExecutor(max_workers=3)
-
+_executor = ThreadPoolExecutor(max_workers=2)
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -23,14 +26,18 @@ def _scrape_sync(params: dict) -> list[dict]:
         return []
 
     keywords = urllib.parse.quote(params.get("keywords", "manager director"))
-    url = f"https://www.glassdoor.co.uk/Job/jobs.htm?sc.keyword={keywords}&locT=C&locId=2671&fromAge=30"
+    url = (
+        f"https://www.glassdoor.co.uk/Job/jobs.htm"
+        f"?sc.keyword={keywords}&locT=C&locId=2671&fromAge=30"
+    )
 
-    jobs = []
+    jobs: list[dict] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
         )
+        context = None
         try:
             context = browser.new_context(
                 user_agent=_UA,
@@ -38,16 +45,50 @@ def _scrape_sync(params: dict) -> list[dict]:
                 locale="en-GB",
             )
             page = context.new_page()
-            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            page.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-            cards = page.query_selector_all('[data-test="jobListing"]')
+            title = page.title()
+            if any(kw in title.lower() for kw in ("blocked", "just a moment", "captcha", "403")):
+                logger.warning("Glassdoor: blocked (page title: %s) — bot detection triggered", title)
+                return []
+
+            # Try current selectors first, then fall back to broader ones
+            cards = (
+                page.query_selector_all('[data-test="jobListing"]') or
+                page.query_selector_all('li[class*="JobsList"]') or
+                page.query_selector_all('[class*="JobCard"]') or
+                page.query_selector_all('article[class*="job"]')
+            )
+
+            if not cards:
+                logger.warning(
+                    "Glassdoor: 0 job cards found — selectors may be outdated or login wall active"
+                )
+                return []
+
             for card in cards[:50]:
                 try:
-                    title_el = card.query_selector('[data-test="job-title"]')
-                    company_el = card.query_selector('[data-test="employer-name"]')
-                    location_el = card.query_selector('[data-test="emp-location"]')
-                    salary_el = card.query_selector('[data-test="detailSalary"]')
+                    title_el = (
+                        card.query_selector('[data-test="job-title"]') or
+                        card.query_selector('[class*="JobTitle"]') or
+                        card.query_selector('a[class*="jobTitle"]')
+                    )
+                    company_el = (
+                        card.query_selector('[data-test="employer-name"]') or
+                        card.query_selector('[class*="EmployerName"]') or
+                        card.query_selector('[class*="employer"]')
+                    )
+                    location_el = (
+                        card.query_selector('[data-test="emp-location"]') or
+                        card.query_selector('[class*="Location"]')
+                    )
+                    salary_el = (
+                        card.query_selector('[data-test="detailSalary"]') or
+                        card.query_selector('[class*="salary"]')
+                    )
                     link_el = card.query_selector("a")
 
                     title = title_el.inner_text().strip() if title_el else None
@@ -59,16 +100,19 @@ def _scrape_sync(params: dict) -> list[dict]:
                     if not title or not company:
                         continue
 
-                    salary_min, salary_max = clean_salary(salary_text) if salary_text else (None, None)
-
+                    sal_min, sal_max = clean_salary(salary_text) if salary_text else (None, None)
                     jobs.append({
                         "title": title,
                         "company": company,
                         "location": location_text,
-                        "url": f"https://www.glassdoor.co.uk{href}" if href and href.startswith("/") else href,
+                        "url": (
+                            f"https://www.glassdoor.co.uk{href}"
+                            if href and href.startswith("/")
+                            else href
+                        ),
                         "source": "glassdoor",
-                        "salary_min": salary_min,
-                        "salary_max": salary_max,
+                        "salary_min": sal_min,
+                        "salary_max": sal_max,
                         "remote": "remote" in (location_text or "").lower(),
                     })
                 except Exception as e:
@@ -76,7 +120,8 @@ def _scrape_sync(params: dict) -> list[dict]:
         except Exception as e:
             logger.warning("Glassdoor scrape failed: %s", e)
         finally:
-            context.close()
+            if context:
+                context.close()
             browser.close()
 
     logger.info("Glassdoor: %d jobs scraped", len(jobs))

@@ -71,9 +71,13 @@ export const uploadCV = (file: File) => {
   return api.post("/api/cv/upload", form);
 };
 export const getCurrentCV = () => api.get("/api/cv/current");
+export const listCVs = () => api.get("/api/cv/list");
+export const activateCV = (filename: string) => api.post(`/api/cv/activate/${encodeURIComponent(filename)}`);
+export const deleteCVFile = (filename: string) => api.delete(`/api/cv/file/${encodeURIComponent(filename)}`);
 export const deleteCV = () => api.delete("/api/cv/current");
 export const clearScores = () => api.delete("/api/jobs/scores");
 export const clearProfileData = () => api.delete("/api/profile/data");
+export const getHealth = () => api.get("/health");
 
 // Profile / Chat
 export const getProfile = () => api.get("/api/profile");

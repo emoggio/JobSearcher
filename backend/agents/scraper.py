@@ -45,9 +45,25 @@ def _safe_job_fields(job_data: dict) -> dict:
     return {k: v for k, v in job_data.items() if k in valid}
 
 
-async def run_search(db: AsyncSession, user_id: str = "legacy") -> dict:
+async def run_search(db: AsyncSession, user_id: str = "legacy", deep: bool = False) -> dict:
     """Scrape all sources across multiple keyword sets, deduplicate, persist, score.
+    deep=True uses more pages per source to find more results.
     Returns dict with total, by_source counts, and source_errors."""
+    if deep:
+        # Temporarily boost page count for all Playwright-based sources
+        import backend.sources.linkedin as _li
+        import backend.sources.totaljobs as _tj
+        import backend.sources.cwjobs as _cw
+        import backend.sources.reed as _reed
+        original = {_li: _li.PAGES_TO_SCRAPE, _tj: _tj.PAGES_TO_SCRAPE, _cw: _cw.PAGES_TO_SCRAPE, _reed: _reed.PAGES_TO_SCRAPE}
+        _li.PAGES_TO_SCRAPE = 5
+        _tj.PAGES_TO_SCRAPE = 5
+        _cw.PAGES_TO_SCRAPE = 5
+        _reed.PAGES_TO_SCRAPE = 5
+        logger.info("Deep search mode: scraping 5 pages per source")
+    else:
+        original = {}
+
     source_map = [
         (source, params)
         for params in SEARCH_PARAM_SETS
@@ -120,6 +136,10 @@ async def run_search(db: AsyncSession, user_id: str = "legacy") -> dict:
             await score_jobs(db, job_ids=[j.id for j in new_jobs], user_id=user_id)
         except Exception as e:
             logger.warning("Scoring pass failed: %s", e)
+
+    # Restore original page counts if deep mode
+    for mod, orig in original.items():
+        mod.PAGES_TO_SCRAPE = orig
 
     # Log per-source summary
     for src, cnt in sorted(raw_by_source.items()):

@@ -1,5 +1,7 @@
 import { Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
-import { Briefcase, Users, Calendar, FileText, LayoutDashboard, MessageSquare } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Briefcase, Users, Calendar, FileText, LayoutDashboard, MessageSquare, Zap } from "lucide-react";
+import { getHealth } from "./api";
 import Jobs from "./pages/Jobs";
 import Recruiters from "./pages/Recruiters";
 import Applications from "./pages/Applications";
@@ -9,6 +11,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Recover from "./pages/Recover";
 import Profile from "./pages/Profile";
+import FloatingChat from "./components/FloatingChat";
 
 const nav = [
   { to: "/", label: "Jobs", icon: Briefcase },
@@ -16,7 +19,7 @@ const nav = [
   { to: "/recruiters", label: "Recruiters", icon: Users },
   { to: "/calendar", label: "Calendar", icon: Calendar },
   { to: "/cv", label: "CV", icon: FileText },
-  { to: "/profile", label: "Chat", icon: MessageSquare },
+  { to: "/profile", label: "Profile", icon: MessageSquare },
 ];
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -48,13 +51,33 @@ export default function App() {
 }
 
 function AppShell() {
+  const { data: health } = useQuery({
+    queryKey: ["health"],
+    queryFn: () => getHealth().then((r) => r.data),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const aiConnected = health?.ai_connected === true;
+
   return (
     <div className="flex flex-col md:flex-row h-screen bg-gray-950 text-gray-100">
       {/* Sidebar — desktop only */}
       <aside className="hidden md:flex w-56 shrink-0 border-r border-gray-800 flex-col py-8 px-4 gap-1">
         <div className="mb-8 px-2">
           <h1 className="text-xl font-bold tracking-tight text-white">Scout</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Job search platform</p>
+          <div className="flex items-center gap-1.5 mt-1">
+            {aiConnected ? (
+              <>
+                <Zap size={10} className="text-emerald-400" />
+                <p className="text-[10px] text-emerald-400 font-medium">AI-powered</p>
+              </>
+            ) : (
+              <>
+                <div className="w-1.5 h-1.5 rounded-full bg-yellow-600" />
+                <p className="text-[10px] text-yellow-600">No API key — basic mode</p>
+              </>
+            )}
+          </div>
         </div>
         {nav.map(({ to, label, icon: Icon }) => (
           <NavLink
@@ -75,7 +98,10 @@ function AppShell() {
 
       {/* Mobile top bar */}
       <header className="md:hidden flex items-center justify-between px-4 py-3 border-b border-gray-800 shrink-0">
-        <h1 className="text-lg font-bold tracking-tight text-white">Scout</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-lg font-bold tracking-tight text-white">Scout</h1>
+          {aiConnected && <Zap size={12} className="text-emerald-400" aria-label="AI connected" />}
+        </div>
       </header>
 
       {/* Main content */}
@@ -89,6 +115,9 @@ function AppShell() {
           <Route path="/profile" element={<Profile />} />
         </Routes>
       </main>
+
+      {/* Floating chat assistant — visible on all pages */}
+      <FloatingChat />
 
       {/* Bottom nav — mobile only */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-800 flex justify-around py-2 z-50">

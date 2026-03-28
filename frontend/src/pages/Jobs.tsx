@@ -5,7 +5,7 @@ import {
   Lightbulb, CheckCircle2, Link, ScrollText, Users, Building2,
   MapPin, Banknote, Calendar, ChevronRight, X, Briefcase,
 } from "lucide-react";
-import { listJobs, searchJobs, createApplication, tweakCV, importJobUrl, getLogs } from "../api";
+import { listJobs, searchJobs, createApplication, tweakCV, importJobUrl, getLogs, listApplications } from "../api";
 import api from "../api";
 import { formatDistanceToNow, format, parseISO } from "date-fns";
 
@@ -75,7 +75,7 @@ function formatDate(datePosted?: string | null, dateScraped?: string | null) {
 }
 
 function JobCard({
-  job, onApply, onTweak, tweaking, applying, highlighted,
+  job, onApply, onTweak, tweaking, applying, highlighted, tracked,
 }: {
   job: any;
   onApply: (id: string) => void;
@@ -83,6 +83,7 @@ function JobCard({
   tweaking: boolean;
   applying: boolean;
   highlighted?: boolean;
+  tracked?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const salary = formatSalary(job.salary_min, job.salary_max);
@@ -96,12 +97,19 @@ function JobCard({
   return (
     <div className={`bg-gray-900 border rounded-xl overflow-hidden transition-all ${
       highlighted ? "border-emerald-600/60 shadow-lg shadow-emerald-950/30 ring-1 ring-emerald-600/20" :
+      tracked ? "border-indigo-600/40 bg-indigo-950/10" :
       expanded ? "border-indigo-700/50 shadow-lg shadow-indigo-950/30" : "border-gray-800 hover:border-gray-700"
     }`}>
       {highlighted && (
         <div className="bg-emerald-900/30 border-b border-emerald-800/40 px-4 py-1.5 flex items-center gap-1.5">
           <CheckCircle2 size={11} className="text-emerald-400" />
           <span className="text-[11px] text-emerald-400 font-medium">Imported just now</span>
+        </div>
+      )}
+      {tracked && !highlighted && (
+        <div className="bg-indigo-900/20 border-b border-indigo-800/30 px-4 py-1 flex items-center gap-1.5">
+          <CheckCircle2 size={10} className="text-indigo-400" />
+          <span className="text-[10px] text-indigo-400 font-medium">Tracking this application</span>
         </div>
       )}
       {/* Main card row */}
@@ -208,9 +216,9 @@ function JobCard({
           {/* Job description preview */}
           {job.description && (
             <div className="px-4 pt-3 pb-0">
-              <p className="text-[10px] text-gray-600 font-medium uppercase tracking-wide mb-1.5">Description</p>
-              <p className="text-xs text-gray-500 leading-relaxed line-clamp-5">
-                {job.description.slice(0, 600)}{job.description.length > 600 ? "…" : ""}
+              <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wide mb-1.5">About the role</p>
+              <p className="text-xs text-gray-300 leading-relaxed">
+                {job.description.slice(0, 800)}{job.description.length > 800 ? "…" : ""}
               </p>
             </div>
           )}
@@ -249,10 +257,15 @@ function JobCard({
 
             <button
               onClick={(e) => { e.stopPropagation(); onApply(job.id); }}
-              disabled={applying}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs transition-colors"
+              disabled={applying || tracked}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                tracked
+                  ? "bg-indigo-900/40 text-indigo-300 border border-indigo-700/40 cursor-default"
+                  : "bg-gray-800 hover:bg-gray-700"
+              }`}
             >
-              <CheckCircle2 size={12} /> Track
+              <CheckCircle2 size={12} />
+              {tracked ? "Tracked" : "Track"}
             </button>
           </div>
         </div>
@@ -298,8 +311,19 @@ export default function Jobs() {
 
   useEffect(() => {
     api.get("/api/jobs/status").then(({ data }) => {
-      if (data.running) { setSearchRunning(true); setSearchSources(["linkedin"]); }
+      if (data.running) {
+        setSearchRunning(true);
+        setSearchSources(["linkedin"]);
+      } else {
+        // Auto-search if last run was more than 6 hours ago
+        const SIX_HOURS = 6 * 60 * 60 * 1000;
+        const lastRun = data.last_run ? new Date(data.last_run).getTime() : 0;
+        if (Date.now() - lastRun > SIX_HOURS) {
+          runSearch(false);
+        }
+      }
     }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -323,6 +347,12 @@ export default function Jobs() {
     queryFn: () => listJobs(filters).then((r) => r.data),
   });
 
+  const { data: applications = [] } = useQuery({
+    queryKey: ["applications"],
+    queryFn: () => listApplications().then((r) => r.data),
+  });
+  const trackedJobIds = new Set((applications as any[]).map((a: any) => a.job_id));
+
   const { data: searchStatus } = useQuery({
     queryKey: ["search-status"],
     queryFn: () => api.get("/api/jobs/status").then((r) => r.data),
@@ -330,7 +360,7 @@ export default function Jobs() {
   });
 
   const { mutate: runSearch } = useMutation({
-    mutationFn: () => searchJobs(),
+    mutationFn: (deep: boolean = false) => searchJobs({ deep }),
     onSuccess: () => { setSearchRunning(true); setSearchSources(["linkedin"]); },
   });
 
@@ -418,12 +448,13 @@ export default function Jobs() {
             <ScrollText size={14} />
           </button>
           <button
-            onClick={() => runSearch()}
+            onClick={() => runSearch(jobs.length > 0)}
             disabled={searchRunning}
+            title={jobs.length > 0 ? "Deep search — scans more pages per source" : "Scan all job boards"}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 px-4 py-2 rounded-lg text-sm font-medium transition-colors shrink-0"
           >
             {searchRunning ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-            {searchRunning ? "Searching…" : "Search"}
+            {searchRunning ? "Searching…" : jobs.length > 0 ? "Deep Search" : "Search"}
           </button>
         </div>
       </div>
@@ -433,20 +464,21 @@ export default function Jobs() {
         onSubmit={(e) => { e.preventDefault(); if (importUrl.trim()) importMutate(importUrl.trim()); }}
         className="flex gap-2"
       >
-        <div className="flex-1 flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-lg px-3 py-2 focus-within:border-indigo-500 transition-colors">
+        <div className="flex-1 flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-lg px-3 py-2.5 focus-within:border-indigo-500 transition-colors min-w-0">
           <Link size={13} className="text-gray-600 shrink-0" />
           <input
-            type="text"
+            type="url"
+            inputMode="url"
             value={importUrl}
             onChange={(e) => setImportUrl(e.target.value)}
-            placeholder="Paste any job URL to import…"
-            className="flex-1 bg-transparent text-sm outline-none placeholder-gray-700"
+            placeholder="Paste a job URL to import…"
+            className="flex-1 bg-transparent text-sm outline-none placeholder-gray-700 min-w-0"
           />
         </div>
         <button
           type="submit"
           disabled={importing || !importUrl.trim()}
-          className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 rounded-lg text-sm transition-colors shrink-0"
+          className="px-3 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 rounded-lg text-sm transition-colors shrink-0"
         >
           {importing ? <Loader2 size={14} className="animate-spin" /> : "Import"}
         </button>
@@ -489,9 +521,9 @@ export default function Jobs() {
       )}
 
       {/* Filters */}
-      <div className="flex gap-2 flex-wrap items-center">
+      <div className="bg-gray-900/60 border border-gray-800 rounded-xl p-3 grid grid-cols-2 sm:flex sm:flex-wrap gap-2 items-center">
         <select
-          className="bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-xs"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs col-span-1"
           value={filters.date_posted}
           onChange={(e) => setFilters((f) => ({ ...f, date_posted: e.target.value }))}
         >
@@ -502,7 +534,7 @@ export default function Jobs() {
         </select>
 
         <select
-          className="bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-xs"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs col-span-1"
           value={filters.salary_min}
           onChange={(e) => setFilters((f) => ({ ...f, salary_min: Number(e.target.value) }))}
         >
@@ -513,7 +545,7 @@ export default function Jobs() {
         </select>
 
         <select
-          className="bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-xs"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs col-span-1"
           value={filters.compatibility_min ?? ""}
           onChange={(e) => setFilters((f) => ({ ...f, compatibility_min: e.target.value ? Number(e.target.value) : undefined }))}
         >
@@ -524,7 +556,7 @@ export default function Jobs() {
         </select>
 
         <select
-          className="bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-xs"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs col-span-1"
           value={source}
           onChange={(e) => setSource(e.target.value)}
         >
@@ -533,33 +565,35 @@ export default function Jobs() {
         </select>
 
         <select
-          className="bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-xs"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs col-span-1"
           value={sortBy}
           onChange={(e) => setSortBy(e.target.value as "score" | "date")}
         >
-          <option value="score">Sort: Best match</option>
-          <option value="date">Sort: Newest first</option>
+          <option value="score">Best match</option>
+          <option value="date">Newest first</option>
         </select>
 
         {/* Industry multi-select */}
-        <div ref={industryRef} className="relative">
+        <div ref={industryRef} className="relative col-span-1">
           <button
             onClick={() => setShowIndustryDropdown((v) => !v)}
-            className="flex items-center gap-1.5 bg-gray-900 border border-gray-800 rounded-lg px-3 py-1.5 text-xs"
+            className="w-full flex items-center justify-between gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs"
           >
-            Exclude
-            {excludedIndustries.length > 0 && (
-              <span className="bg-indigo-600 text-white text-[10px] px-1.5 rounded-full">{excludedIndustries.length}</span>
-            )}
-            <ChevronDown size={11} />
+            <span>Exclude</span>
+            <div className="flex items-center gap-1">
+              {excludedIndustries.length > 0 && (
+                <span className="bg-indigo-600 text-white text-[10px] px-1.5 rounded-full">{excludedIndustries.length}</span>
+              )}
+              <ChevronDown size={11} />
+            </div>
           </button>
           {showIndustryDropdown && (
-            <div className="absolute top-full mt-1 left-0 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl z-50 py-1 min-w-48">
+            <div className="absolute top-full mt-1 left-0 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 py-1 min-w-48">
               {INDUSTRIES.map((ind) => (
                 <button
                   key={ind}
                   onClick={() => toggleIndustry(ind)}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-gray-800 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-gray-800 transition-colors"
                 >
                   <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${excludedIndustries.includes(ind) ? "bg-indigo-600 border-indigo-600" : "border-gray-600"}`}>
                     {excludedIndustries.includes(ind) && <CheckCircle2 size={9} className="text-white" />}
@@ -594,125 +628,159 @@ export default function Jobs() {
               tweaking={tweakingId === job.id}
               applying={applyingId === job.id}
               highlighted={job.id === lastImportedId}
+              tracked={trackedJobIds.has(job.id)}
             />
           ))}
         </div>
       )}
 
-      {/* Log drawer */}
+      {/* Log / Debug Modal */}
       {showLogs && (
-        <div className="fixed inset-0 bg-black/80 flex items-end justify-center z-50 p-4" onClick={() => setShowLogs(false)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-3xl max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-              <div className="flex items-center gap-3">
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-3 md:p-6"
+          onClick={() => setShowLogs(false)}
+        >
+          <div
+            className="bg-gray-900 border border-gray-700/80 rounded-2xl w-full max-w-3xl flex flex-col shadow-2xl"
+            style={{ maxHeight: "min(85vh, 680px)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800 shrink-0">
+              <div className="flex items-center gap-1 bg-gray-800/60 rounded-lg p-1">
                 <button
                   onClick={() => setLogTab("logs")}
-                  className={`text-sm font-medium flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${logTab === "logs" ? "text-white bg-gray-800" : "text-gray-500 hover:text-gray-300"}`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    logTab === "logs"
+                      ? "bg-gray-700 text-white shadow-sm"
+                      : "text-gray-500 hover:text-gray-300"
+                  }`}
                 >
-                  <ScrollText size={12} /> Logs
+                  <ScrollText size={13} /> Logs
                 </button>
                 <button
                   onClick={() => setLogTab("debug")}
-                  className={`text-sm font-medium flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${logTab === "debug" ? "text-white bg-gray-800" : "text-gray-500 hover:text-gray-300"}`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    logTab === "debug"
+                      ? "bg-gray-700 text-white shadow-sm"
+                      : "text-gray-500 hover:text-gray-300"
+                  }`}
                 >
                   Source Health
                   {searchStatus?.by_source && Object.values(searchStatus.by_source).some((v: any) => v === 0) && (
-                    <span className="bg-red-500/20 text-red-400 text-[10px] px-1.5 rounded-full border border-red-500/30">!</span>
+                    <span className="ml-1 bg-red-500/20 text-red-400 text-[10px] px-1.5 py-0.5 rounded-full border border-red-500/30">!</span>
                   )}
                 </button>
               </div>
-              <button onClick={() => setShowLogs(false)} className="text-gray-500 hover:text-white">
+              <button
+                onClick={() => setShowLogs(false)}
+                className="p-1.5 text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+              >
                 <X size={16} />
               </button>
             </div>
 
+            {/* Body */}
             {logTab === "logs" ? (
-              <div className="flex-1 overflow-auto p-4 font-mono text-[11px] text-gray-500 space-y-0.5">
+              <div className="flex-1 overflow-auto p-4 font-mono text-[11px] space-y-px">
                 {logs.length === 0 ? (
-                  <p className="text-gray-700">No logs yet.</p>
+                  <p className="text-gray-600 py-8 text-center">No logs yet — run a search first.</p>
                 ) : (
                   logs.map((line, i) => (
-                    <p key={i} className={
-                      line.includes("[ERROR]") ? "text-red-400" :
-                      line.includes("[WARNING]") ? "text-yellow-600" :
-                      line.includes("Saved") || line.includes("complete") ? "text-emerald-500" :
-                      ""
-                    }>
+                    <p
+                      key={i}
+                      className={`leading-relaxed ${
+                        line.includes("[ERROR]") || line.includes("ERROR") ? "text-red-400" :
+                        line.includes("[WARNING]") || line.includes("WARNING") ? "text-yellow-500" :
+                        line.includes("Saved") || line.includes("complete") || line.includes("new jobs") ? "text-emerald-400" :
+                        "text-gray-500"
+                      }`}
+                    >
                       {line}
                     </p>
                   ))
                 )}
               </div>
             ) : (
-              <div className="flex-1 overflow-auto p-4 space-y-4">
-                {/* Last search stats */}
-                {searchStatus?.last_run && (
-                  <div>
-                    <p className="text-xs text-gray-500 mb-2">
-                      Last search: <span className="text-gray-300">{new Date(searchStatus.last_run).toLocaleString()}</span>
-                      {" · "}<span className="text-emerald-400">{searchStatus.last_count} new jobs</span>
-                    </p>
+              <div className="flex-1 overflow-auto p-5 space-y-5">
+                {/* Last search summary bar */}
+                {searchStatus?.last_run ? (
+                  <div className="flex flex-wrap items-center gap-3 bg-gray-800/50 rounded-xl px-4 py-3">
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wide">Last search</p>
+                      <p className="text-xs text-gray-300">{new Date(searchStatus.last_run).toLocaleString()}</p>
+                    </div>
+                    <div className="h-8 w-px bg-gray-700 hidden sm:block" />
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wide">New jobs found</p>
+                      <p className="text-sm font-bold text-emerald-400">{searchStatus.last_count}</p>
+                    </div>
+                    <div className="h-8 w-px bg-gray-700 hidden sm:block" />
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wide">Total in DB</p>
+                      <p className="text-sm font-bold text-indigo-400">{searchStatus.total_jobs ?? "—"}</p>
+                    </div>
                   </div>
+                ) : (
+                  <p className="text-xs text-gray-600">Run a search to see stats here.</p>
                 )}
 
-                {/* Per-source counts */}
-                {searchStatus?.by_source && Object.keys(searchStatus.by_source).length > 0 ? (
+                {/* Per-source grid */}
+                {searchStatus?.by_source && Object.keys(searchStatus.by_source).length > 0 && (
                   <div>
-                    <p className="text-xs text-gray-600 font-medium uppercase tracking-wide mb-3">Jobs scraped per source (last search)</p>
+                    <p className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-3">Jobs scraped per source</p>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {SOURCES.map((src) => {
-                        const count = searchStatus.by_source[src] ?? null;
-                        const hasError = searchStatus.source_errors?.[src]?.length > 0;
-                        const color = hasError ? "border-red-800/50 bg-red-950/20" :
-                          count === null ? "border-gray-800 bg-gray-900/40" :
-                          count === 0 ? "border-yellow-800/50 bg-yellow-950/20" :
-                          "border-emerald-800/40 bg-emerald-950/15";
-                        const textColor = hasError ? "text-red-400" :
-                          count === null ? "text-gray-600" :
-                          count === 0 ? "text-yellow-500" :
-                          "text-emerald-400";
+                        const count = (searchStatus.by_source as Record<string, number>)[src] ?? null;
+                        const errors: string[] = searchStatus.source_errors?.[src] ?? [];
+                        const hasError = errors.length > 0;
+                        const statusColor = hasError
+                          ? "border-red-700/50 bg-red-950/20"
+                          : count === null
+                            ? "border-gray-800 bg-gray-900/30"
+                            : count === 0
+                              ? "border-yellow-700/40 bg-yellow-950/15"
+                              : "border-emerald-700/40 bg-emerald-950/15";
+                        const numColor = hasError ? "text-red-400" : count === null ? "text-gray-600" : count === 0 ? "text-yellow-500" : "text-emerald-400";
                         return (
-                          <div key={src} className={`border rounded-lg p-3 ${color}`}>
-                            <p className="text-xs text-gray-400 capitalize">{src}</p>
-                            <p className={`text-lg font-bold ${textColor}`}>
+                          <div key={src} className={`border rounded-xl p-3 ${statusColor}`}>
+                            <p className="text-xs text-gray-400 capitalize font-medium">{src}</p>
+                            <p className={`text-2xl font-bold mt-1 ${numColor}`}>
                               {count === null ? "—" : count}
                             </p>
-                            {hasError && (
-                              <p className="text-[10px] text-red-400 mt-0.5 truncate">
-                                {searchStatus.source_errors[src][0]}
-                              </p>
-                            )}
-                            {count === 0 && !hasError && (
-                              <p className="text-[10px] text-yellow-600 mt-0.5">0 results — may be blocked</p>
+                            {hasError ? (
+                              <p className="text-[10px] text-red-400 mt-1 line-clamp-2">{errors[0]}</p>
+                            ) : count === 0 ? (
+                              <p className="text-[10px] text-yellow-600 mt-1">Blocked or no results</p>
+                            ) : (
+                              <p className="text-[10px] text-emerald-600 mt-1">OK</p>
                             )}
                           </div>
                         );
                       })}
                     </div>
                   </div>
-                ) : (
-                  <p className="text-xs text-gray-600">Run a search to see per-source stats here.</p>
                 )}
 
-                {/* Errors */}
+                {/* Search errors */}
                 {searchStatus?.errors?.length > 0 && (
-                  <div>
-                    <p className="text-xs text-gray-600 font-medium uppercase tracking-wide mb-2">Search errors</p>
-                    {searchStatus.errors.map((e: string, i: number) => (
-                      <p key={i} className="text-xs text-red-400 font-mono">{e}</p>
+                  <div className="bg-red-950/20 border border-red-800/30 rounded-xl p-4">
+                    <p className="text-xs text-red-400 font-medium mb-2">Search errors</p>
+                    {(searchStatus.errors as string[]).map((e, i) => (
+                      <p key={i} className="text-xs text-red-300/80 font-mono">{e}</p>
                     ))}
                   </div>
                 )}
 
-                {/* Tips for zero-result sources */}
-                {searchStatus?.by_source && Object.entries(searchStatus.by_source).some(([, v]) => v === 0) && (
-                  <div className="bg-amber-950/20 border border-amber-800/30 rounded-lg p-3 space-y-1.5">
+                {/* Tips */}
+                {searchStatus?.by_source && Object.values(searchStatus.by_source as Record<string, number>).some((v) => v === 0) && (
+                  <div className="bg-amber-950/20 border border-amber-800/30 rounded-xl p-4 space-y-2">
                     <p className="text-xs text-amber-400 font-medium">Why some sources return 0 results</p>
-                    <ul className="text-[11px] text-amber-200/70 space-y-1 list-disc list-inside">
-                      <li>LinkedIn, Indeed, Glassdoor use anti-bot detection — try running from a residential IP</li>
-                      <li>Sources may have temporarily changed their HTML — selector updates may be needed</li>
-                      <li>Running multiple searches quickly can trigger rate limiting</li>
-                      <li>Reed and Adzuna use APIs and are most reliable</li>
+                    <ul className="text-[11px] text-amber-200/60 space-y-1.5 list-disc list-inside">
+                      <li>LinkedIn, Indeed, Glassdoor use anti-bot detection — residential IP helps</li>
+                      <li>Sources may have updated their HTML structure since last selector update</li>
+                      <li>Rapid repeated searches can trigger rate limiting</li>
+                      <li>Reed and Adzuna use public APIs and are most reliable</li>
                     </ul>
                   </div>
                 )}

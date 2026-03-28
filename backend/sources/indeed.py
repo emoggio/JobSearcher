@@ -1,147 +1,130 @@
 """
-Indeed scraper with stealth mode to bypass bot detection.
-Uses --disable-blink-features=AutomationControlled and navigator.webdriver override.
+Indeed scraper via RSS feed — no Playwright, no bot detection issues.
+RSS endpoint is public and stable, returns up to 25 results per page.
 """
 import asyncio
 import logging
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor
-from backend.sources._base import clean_salary, parse_date
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+
+import httpx
+
+from backend.sources._base import clean_salary
 
 logger = logging.getLogger(__name__)
-_executor = ThreadPoolExecutor(max_workers=3)
 
-PAGES_TO_SCRAPE = 3  # 15–25 results/page
+PAGES_TO_SCRAPE = 3  # 25 results/page = ~75 jobs per keyword set
 
-
-def _stealth_page(browser):
-    """Create a browser page with stealth settings to reduce bot detection."""
-    context = browser.new_context(
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
-        ),
-        extra_http_headers={
-            "Accept-Language": "en-GB,en;q=0.9",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        },
-    )
-    page = context.new_page()
-    # Override webdriver flag
-    page.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-GB', 'en'] });
-    """)
-    return page
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+}
 
 
-def _scrape_page(page, url: str, jobs: list, seen_urls: set) -> int:
+def _parse_rss_date(text: str | None) -> datetime | None:
+    if not text:
+        return None
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        return parsedate_to_datetime(text).replace(tzinfo=None)
+    except Exception:
+        return None
 
-        # Check for block page
-        title = page.title()
-        if "blocked" in title.lower() or "just a moment" in title.lower():
-            logger.warning("Indeed: blocked at %s (title: %s)", url, title)
-            return -1  # Signal to stop
 
-        cards = page.query_selector_all('[data-testid="slider_item"]')
-        if not cards:
-            # Try alternative selectors
-            cards = page.query_selector_all('.job_seen_beacon') or page.query_selector_all('[class*="job_seen"]')
+def _salary_from_description(desc: str) -> tuple[int | None, int | None]:
+    """Try to extract salary from the HTML description snippet."""
+    import re
+    # Look for patterns like £90,000, £90k, £90,000 - £120,000
+    text = re.sub(r"<[^>]+>", " ", desc)  # strip HTML tags
+    return clean_salary(text)
 
-        count = 0
-        for card in cards:
+
+async def scrape(params: dict) -> list[dict]:
+    keywords = params.get("keywords", "programme director")
+    location = params.get("location", "London")
+    salary_min = params.get("salary_min", 90000)
+
+    q = urllib.parse.quote_plus(keywords)
+    l_ = urllib.parse.quote_plus(location)
+
+    jobs: list[dict] = []
+    seen_urls: set[str] = set()
+
+    async with httpx.AsyncClient(headers=_HEADERS, timeout=30, follow_redirects=True) as client:
+        for page_num in range(PAGES_TO_SCRAPE):
+            start = page_num * 25
+            # salary filter is advisory — Indeed still shows some without it
+            url = (
+                f"https://uk.indeed.com/rss"
+                f"?q={q}&l={l_}&sort=date&fromage=30&start={start}"
+                f"&salary={salary_min}%2B"
+            )
             try:
-                title_el = card.query_selector('[data-testid="jobTitle"]') or card.query_selector('h2 a')
-                company_el = card.query_selector('[data-testid="company-name"]') or card.query_selector('[class*="companyName"]')
-                location_el = card.query_selector('[data-testid="text-location"]') or card.query_selector('[class*="companyLocation"]')
-                salary_el = card.query_selector('[data-testid="attribute_snippet_testid"]')
-                date_el = card.query_selector('[data-testid="myJobsStateDate"]') or card.query_selector('[class*="date"]')
-                link_el = card.query_selector("a[id]") or card.query_selector("h2 a")
+                resp = await client.get(url)
+                resp.raise_for_status()
+            except Exception as e:
+                logger.warning("Indeed RSS page %d failed: %s", page_num, e)
+                break
 
-                title = title_el.inner_text().strip() if title_el else None
-                company = company_el.inner_text().strip() if company_el else None
-                location_text = location_el.inner_text().strip() if location_el else None
-                salary_text = salary_el.inner_text().strip() if salary_el else ""
-                date_text = date_el.inner_text().strip() if date_el else ""
-                href = link_el.get_attribute("href") if link_el else None
+            try:
+                root = ET.fromstring(resp.text)
+            except ET.ParseError as e:
+                logger.warning("Indeed RSS parse error: %s", e)
+                break
 
-                if not title or not company:
+            items = root.findall(".//item")
+            if not items:
+                break  # No more results
+
+            for item in items:
+                link = (item.findtext("link") or "").strip()
+                if not link or link in seen_urls:
                     continue
+                seen_urls.add(link)
 
-                full_url = f"https://uk.indeed.com{href}" if href and href.startswith("/") else href
-                if not full_url or full_url in seen_urls:
+                raw_title = item.findtext("title") or ""
+                # RSS title format: "Job Title - Company Name"
+                if " - " in raw_title:
+                    title_part, company_part = raw_title.rsplit(" - ", 1)
+                else:
+                    title_part = raw_title
+                    company_part = ""
+
+                title = title_part.strip()
+                company = company_part.strip() or None
+
+                description = item.findtext("description") or ""
+                pub_date = _parse_rss_date(item.findtext("pubDate"))
+
+                # Pull location from description if possible (it's in the HTML snippet)
+                import re
+                loc_match = re.search(r"<b>Location</b>:\s*([^<\n]+)", description)
+                location_text = loc_match.group(1).strip() if loc_match else location
+
+                sal_min, sal_max = _salary_from_description(description)
+
+                if not title:
                     continue
-                seen_urls.add(full_url)
-
-                salary_min, salary_max = clean_salary(salary_text) if salary_text else (None, None)
 
                 jobs.append({
                     "title": title,
                     "company": company,
                     "location": location_text,
-                    "url": full_url,
+                    "description": re.sub(r"<[^>]+>", " ", description).strip(),
+                    "url": link,
                     "source": "indeed",
-                    "salary_min": salary_min,
-                    "salary_max": salary_max,
-                    "date_posted": parse_date(date_text),
+                    "salary_min": sal_min,
+                    "salary_max": sal_max,
+                    "date_posted": pub_date,
                     "remote": "remote" in (location_text or "").lower(),
                 })
-                count += 1
-            except Exception as e:
-                logger.debug("Indeed card parse error: %s", e)
-        return count
-    except Exception as e:
-        logger.warning("Indeed page error: %s", e)
-        return 0
 
+            await asyncio.sleep(0.5)  # polite delay between pages
 
-def _scrape_sync(params: dict) -> list[dict]:
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return []
-
-    keywords = urllib.parse.quote(params.get("keywords", "manager director"))
-    search_location = urllib.parse.quote(params.get("location", "London"))
-    salary_min = params.get("salary_min", 90000)
-
-    jobs = []
-    seen_urls: set = set()
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        try:
-            for page_num in range(PAGES_TO_SCRAPE):
-                start = page_num * 10
-                url = (
-                    f"https://uk.indeed.com/jobs"
-                    f"?q={keywords}&l={search_location}&sort=date&fromage=30&start={start}"
-                    f"&salary={salary_min}%2B"
-                )
-                page = _stealth_page(browser)
-                found = _scrape_page(page, url, jobs, seen_urls)
-                page.close()
-
-                if found < 0:  # Blocked
-                    break
-                if found == 0:
-                    break
-        except Exception as e:
-            logger.warning("Indeed scrape failed: %s", e)
-        finally:
-            browser.close()
-
-    logger.info("Indeed: %d jobs scraped", len(jobs))
+    logger.info("Indeed RSS: %d jobs scraped", len(jobs))
     return jobs
-
-
-async def scrape(params: dict) -> list[dict]:
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_executor, _scrape_sync, params)

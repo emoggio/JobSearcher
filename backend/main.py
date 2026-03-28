@@ -82,7 +82,8 @@ async def startup():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    ai_connected = bool(os.getenv("ANTHROPIC_API_KEY"))
+    return {"status": "ok", "ai_connected": ai_connected}
 
 
 @app.get("/api/logs")

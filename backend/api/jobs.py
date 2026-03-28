@@ -33,13 +33,13 @@ def _user_id(request: Request) -> str:
     return uid
 
 
-async def _run_and_track(user_id: str):
+async def _run_and_track(user_id: str, deep: bool = False):
     state = _get_state(user_id)
     state["running"] = True
     state["errors"] = []
     try:
         async with SessionLocal() as db:
-            result = await run_search(db, user_id=user_id)
+            result = await run_search(db, user_id=user_id, deep=deep)
         count = result.get("total", 0) if isinstance(result, dict) else result
         state["last_count"] = count
         state["last_run"] = datetime.utcnow().isoformat()
@@ -54,13 +54,14 @@ async def _run_and_track(user_id: str):
 
 
 @router.post("/search")
-async def trigger_search(request: Request, background_tasks: BackgroundTasks):
+async def trigger_search(request: Request, background_tasks: BackgroundTasks, body: dict = {}):
     user_id = _user_id(request)
     state = _get_state(user_id)
     if state["running"]:
         return {"status": "already running"}
-    background_tasks.add_task(_run_and_track, user_id)
-    return {"status": "search started"}
+    deep = bool(body.get("deep", False))
+    background_tasks.add_task(_run_and_track, user_id, deep)
+    return {"status": "search started", "deep": deep}
 
 
 @router.get("/status")
