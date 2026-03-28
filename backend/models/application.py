@@ -8,6 +8,7 @@ class Application(Base):
     __tablename__ = "applications"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=True, index=True)  # nullable for legacy rows
     job_id = Column(String, ForeignKey("jobs.id"), nullable=False)
     status = Column(String, default="applied")   # applied | screen | interview | offer | rejected
     applied_at = Column(DateTime, server_default=func.now())

@@ -1,7 +1,7 @@
 """
-Parses the uploaded CV and tailors it for specific job descriptions using Claude.
+Parses the uploaded CV (per user) and tailors it for specific job descriptions using Claude.
+CVs are stored per-user at cv/<user_id>/parsed.json to keep data isolated.
 """
-import glob
 import json
 import logging
 import os
@@ -14,20 +14,27 @@ from backend.models.job import Job
 logger = logging.getLogger(__name__)
 client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# Anchor paths to repo root (two levels up from this file: agents/ -> backend/ -> root)
 _ROOT = Path(__file__).resolve().parent.parent.parent
 CV_DIR = _ROOT / "cv"
-CV_CACHE_PATH = CV_DIR / "parsed.json"
 
 
-def find_cv_pdf() -> Path | None:
-    """Find the first PDF in the cv/ folder regardless of filename."""
-    pdfs = list(CV_DIR.glob("*.pdf"))
-    return pdfs[0] if pdfs else None
+def _cv_dir(user_id: str) -> Path:
+    """Returns the per-user CV directory, creating it if needed."""
+    d = CV_DIR / user_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-async def parse_cv(cv_path: str) -> dict:
-    """Extract structured profile from PDF CV using Claude."""
+def _parsed_path(user_id: str) -> Path:
+    return _cv_dir(user_id) / "parsed.json"
+
+
+def _pdf_path(user_id: str, filename: str) -> Path:
+    return _cv_dir(user_id) / filename
+
+
+async def parse_cv(cv_path: str, user_id: str = "legacy") -> dict:
+    """Extract structured profile from PDF CV using Claude. Saves to per-user cache."""
     import base64
     with open(cv_path, "rb") as f:
         pdf_b64 = base64.standard_b64encode(f.read()).decode("utf-8")
@@ -58,23 +65,29 @@ async def parse_cv(cv_path: str) -> dict:
     )
 
     parsed = json.loads(response.content[0].text)
-    CV_DIR.mkdir(exist_ok=True)
-    CV_CACHE_PATH.write_text(json.dumps(parsed, indent=2))
-    logger.info("CV parsed and cached")
+    cache = _parsed_path(user_id)
+    cache.write_text(json.dumps(parsed, indent=2))
+    logger.info("CV parsed and cached for user %s", user_id)
     return parsed
 
 
-async def get_current_cv() -> dict | None:
-    if CV_CACHE_PATH.exists():
-        return json.loads(CV_CACHE_PATH.read_text())
+async def get_current_cv(user_id: str = "legacy") -> dict | None:
+    """Load the parsed CV for the given user. Returns None if not uploaded yet."""
+    path = _parsed_path(user_id)
+    # Legacy fallback: try old single-file location
+    legacy_path = CV_DIR / "parsed.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    if user_id == "legacy" and legacy_path.exists():
+        return json.loads(legacy_path.read_text())
     return None
 
 
-async def tweak_cv_for_job(job_id: str) -> str:
+async def tweak_cv_for_job(job_id: str, user_id: str = "legacy") -> str:
     """Rewrite CV to maximise fit for a specific job without fabricating experience."""
-    cv = await get_current_cv()
+    cv = await get_current_cv(user_id)
     if not cv:
-        return "No CV uploaded yet."
+        return "No CV uploaded yet. Please upload your CV first."
 
     async with SessionLocal() as db:
         result = await db.execute(select(Job).where(Job.id == job_id))

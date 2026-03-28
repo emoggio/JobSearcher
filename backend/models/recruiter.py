@@ -8,6 +8,7 @@ class Recruiter(Base):
     __tablename__ = "recruiters"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, nullable=True, index=True)  # owner; nullable for legacy rows
     name = Column(String)
     title = Column(String)
     company = Column(String)

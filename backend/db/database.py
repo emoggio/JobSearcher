@@ -13,7 +13,9 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    from backend.models import job, application, recruiter  # noqa: F401
+    from backend.models import (  # noqa: F401
+        job, application, recruiter, user_profile, user, user_job_score
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

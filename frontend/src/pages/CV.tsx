@@ -1,12 +1,13 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { uploadCV, getCurrentCV } from "../api";
-import { Upload, CheckCircle } from "lucide-react";
+import { uploadCV, getCurrentCV, deleteCV, clearScores } from "../api";
+import { Upload, CheckCircle, Trash2, RefreshCw, AlertTriangle } from "lucide-react";
 
 export default function CV() {
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const { data: cv } = useQuery({
     queryKey: ["cv"],
@@ -22,13 +23,76 @@ export default function CV() {
     },
   });
 
+  const { mutate: removeCv, isPending: deleting } = useMutation({
+    mutationFn: () => deleteCV(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["cv"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      setConfirmDelete(false);
+    },
+  });
+
+  const { mutate: resetScores, isPending: resetting } = useMutation({
+    mutationFn: () => clearScores(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+
   function handleFiles(files: FileList | null) {
     if (files?.[0]) upload(files[0]);
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <h2 className="text-xl font-semibold">Your CV</h2>
+    <div className="p-6 space-y-6 max-w-2xl mx-auto">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Your CV</h2>
+        {cv && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => resetScores()}
+              disabled={resetting}
+              title="Re-score all jobs with Claude using this CV"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={12} className={resetting ? "animate-spin" : ""} />
+              Re-score jobs
+            </button>
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Delete CV and start fresh"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-800/40 rounded-lg transition-colors"
+            >
+              <Trash2 size={12} />
+              Delete CV
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Confirm delete dialog */}
+      {confirmDelete && (
+        <div className="bg-red-950/30 border border-red-800/50 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2 text-red-400">
+            <AlertTriangle size={14} />
+            <p className="text-sm font-medium">Delete your CV?</p>
+          </div>
+          <p className="text-xs text-gray-400">This will remove your parsed profile. Scores will remain until you clear them. Upload a new CV to re-analyse.</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => removeCv()}
+              disabled={deleting}
+              className="text-xs px-3 py-1.5 bg-red-700 hover:bg-red-600 rounded-lg transition-colors"
+            >
+              {deleting ? "Deleting…" : "Yes, delete"}
+            </button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              className="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Upload zone */}
       <div
@@ -51,7 +115,7 @@ export default function CV() {
         ) : (
           <div className="flex flex-col items-center gap-3 text-gray-500">
             <Upload size={28} />
-            <p className="text-sm">Drop your PDF CV here or click to browse</p>
+            <p className="text-sm">{cv ? "Drop a new PDF to replace your CV" : "Drop your PDF CV here or click to browse"}</p>
           </div>
         )}
       </div>

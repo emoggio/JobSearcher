@@ -40,13 +40,13 @@ Return only the message text."""
     return response.content[0].text.strip()
 
 
-async def find_recruiters_for_job(job_id: str, db: AsyncSession) -> list[dict]:
+async def find_recruiters_for_job(job_id: str, db: AsyncSession, user_id: str = "legacy") -> list[dict]:
     result = await db.execute(select(Job).where(Job.id == job_id))
     job = result.scalar_one_or_none()
     if not job:
         return []
 
-    cv = await get_current_cv()
+    cv = await get_current_cv(user_id=user_id)
     message = await draft_outreach(cv or {}, job)
     search_url = linkedin_search_url(job.company, job.title)
 
@@ -58,6 +58,7 @@ async def find_recruiters_for_job(job_id: str, db: AsyncSession) -> list[dict]:
         linkedin_url=search_url,
         job_id=job_id,
         message_draft=message,
+        user_id=user_id,
     )
     db.add(recruiter)
     await db.commit()

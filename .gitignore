@@ -1,12 +1,33 @@
+# Secrets
 .env
-scout.db
-cv/*.pdf
-cv/parsed.json
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# CV files (user data — never commit)
+cv/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 venv/
+*.egg-info/
+
+# Node
 node_modules/
 dist/
+
+# Logs
+logs/
+*.log
+
+# IDE / OS
 .DS_Store
+.idea/
+.vscode/
 .claude/
+Thumbs.db

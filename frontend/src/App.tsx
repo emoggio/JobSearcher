@@ -1,10 +1,14 @@
-import { Routes, Route, NavLink } from "react-router-dom";
-import { Briefcase, Users, Calendar, FileText, LayoutDashboard } from "lucide-react";
+import { Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
+import { Briefcase, Users, Calendar, FileText, LayoutDashboard, MessageSquare } from "lucide-react";
 import Jobs from "./pages/Jobs";
 import Recruiters from "./pages/Recruiters";
 import Applications from "./pages/Applications";
 import CalendarPage from "./pages/Calendar";
 import CV from "./pages/CV";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+import Recover from "./pages/Recover";
+import Profile from "./pages/Profile";
 
 const nav = [
   { to: "/", label: "Jobs", icon: Briefcase },
@@ -12,12 +16,40 @@ const nav = [
   { to: "/recruiters", label: "Recruiters", icon: Users },
   { to: "/calendar", label: "Calendar", icon: Calendar },
   { to: "/cv", label: "CV", icon: FileText },
+  { to: "/profile", label: "Chat", icon: MessageSquare },
 ];
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const token = localStorage.getItem("scout_token");
+  const location = useLocation();
+  if (!token) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  return <>{children}</>;
+}
 
 export default function App() {
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-gray-950 text-gray-100">
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
+      <Route path="/recover" element={<Recover />} />
 
+      <Route
+        path="/*"
+        element={
+          <RequireAuth>
+            <AppShell />
+          </RequireAuth>
+        }
+      />
+    </Routes>
+  );
+}
+
+function AppShell() {
+  return (
+    <div className="flex flex-col md:flex-row h-screen bg-gray-950 text-gray-100">
       {/* Sidebar — desktop only */}
       <aside className="hidden md:flex w-56 shrink-0 border-r border-gray-800 flex-col py-8 px-4 gap-1">
         <div className="mb-8 px-2">
@@ -54,6 +86,7 @@ export default function App() {
           <Route path="/recruiters" element={<Recruiters />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/cv" element={<CV />} />
+          <Route path="/profile" element={<Profile />} />
         </Routes>
       </main>
 
@@ -65,12 +98,12 @@ export default function App() {
             to={to}
             end={to === "/"}
             className={({ isActive }) =>
-              `flex flex-col items-center gap-0.5 px-3 py-1 text-xs transition-colors ${
+              `flex flex-col items-center gap-0.5 px-2 py-1 text-xs transition-colors ${
                 isActive ? "text-indigo-400" : "text-gray-500"
               }`
             }
           >
-            <Icon size={20} />
+            <Icon size={18} />
             {label}
           </NavLink>
         ))}
