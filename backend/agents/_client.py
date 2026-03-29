@@ -1,11 +1,19 @@
 """
 Shared Anthropic client factory.
-Reads ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, and ANTHROPIC_CUSTOM_HEADERS
-from the environment so the company gateway (Portkey / CGW) works correctly.
+
+Priority order for credentials:
+  1. ANTHROPIC_CUSTOM_HEADERS (process env — set by Claude Code terminal session)
+  2. ~/.claude/config.json + live ANTHROPIC_CUSTOM_HEADERS env (Claude Code gateway)
+  3. ANTHROPIC_API_KEY in .env (standard personal API key)
+
+Always start the backend from the SAME terminal as Claude Code so that
+the live session headers are inherited as process environment variables.
 """
-import os
 import json
 import logging
+import os
+from pathlib import Path
+
 from anthropic import AsyncAnthropic
 
 logger = logging.getLogger(__name__)
@@ -14,39 +22,69 @@ logger = logging.getLogger(__name__)
 def _parse_custom_headers(raw: str) -> dict[str, str]:
     """
     Parse ANTHROPIC_CUSTOM_HEADERS.
-    Supports two formats:
-      1. JSON object: {"x-portkey-config": "abc", ...}  (preferred, set by Scout)
-      2. Comma-separated key: value pairs (set by Claude Code CLI directly)
+    Claude Code sets this as newline-separated 'Key: Value' lines where
+    values may themselves contain colons (e.g. JSON strings).
+    Also handles JSON object format as a fallback.
     """
     if not raw:
         return {}
-    # Try JSON object first (our format)
+    # Try JSON object first
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, dict):
             return {str(k): str(v) for k, v in parsed.items()}
     except Exception:
         pass
-    # Fall back: newline or comma-separated "key: value" lines
+    # Parse newline-separated "Key: Value" lines (split only on FIRST ": ")
     headers: dict[str, str] = {}
-    for part in raw.replace("\n", ",").split(","):
-        part = part.strip()
-        if ":" in part:
-            k, _, v = part.partition(":")
-            headers[k.strip().strip('"')] = v.strip().strip('"')
+    for line in raw.splitlines():
+        line = line.strip()
+        if ": " in line:
+            k, _, v = line.partition(": ")
+            headers[k.strip()] = v.strip()
+        elif ":" in line:
+            k, _, v = line.partition(":")
+            headers[k.strip()] = v.strip()
     return headers
+
+
+def _read_claude_code_config() -> tuple[str, str, str]:
+    """
+    Read api_key, base_url, custom_headers from Claude Code's config.
+    Returns (api_key, base_url, custom_headers_raw).
+    Falls back to empty strings if not found.
+    """
+    try:
+        config_path = Path.home() / ".claude" / "config.json"
+        config = json.loads(config_path.read_text())
+        api_key = config.get("primaryApiKey", "")
+        base_url = config.get("apiBaseUrl", "")
+        return api_key, base_url, ""
+    except Exception:
+        return "", "", ""
 
 
 def make_client() -> AsyncAnthropic:
     """Return an AsyncAnthropic client configured for the current environment."""
+    # 1. Try process environment first (inherited from Claude Code terminal)
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     base_url = os.getenv("ANTHROPIC_BASE_URL", "")
     custom_headers_raw = os.getenv("ANTHROPIC_CUSTOM_HEADERS", "")
 
-    kwargs: dict = {"api_key": api_key}
+    # 2. If no custom headers in env, try reading Claude Code config
+    if not custom_headers_raw and not api_key:
+        cc_key, cc_base, _ = _read_claude_code_config()
+        if cc_key:
+            api_key = api_key or cc_key
+        if cc_base:
+            base_url = base_url or cc_base
+
+    kwargs: dict = {"api_key": api_key or "dummy"}
+
     if base_url:
         kwargs["base_url"] = base_url
-        logger.debug("Anthropic client: using custom base URL %s", base_url)
+        logger.debug("Anthropic client: gateway %s", base_url)
+
     if custom_headers_raw:
         headers = _parse_custom_headers(custom_headers_raw)
         if headers:

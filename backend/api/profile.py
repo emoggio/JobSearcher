@@ -223,7 +223,14 @@ async def chat(body: ChatRequest, request: Request, db: AsyncSession = Depends(g
     username = getattr(request.state, "username", user_id)
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        return {"reply": "No AI API key configured — cannot use chat.", "context_updated": False}
+        return {
+            "reply": (
+                "AI chat isn't available — no Anthropic API key is configured. "
+                "Add ANTHROPIC_API_KEY to your .env file (get a free key at console.anthropic.com) "
+                "and restart the backend to enable this feature."
+            ),
+            "context_updated": False,
+        }
 
     profile = await _get_or_create_profile(db, user_id)
     search_context = profile.search_context or "None yet."
