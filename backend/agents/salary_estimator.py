@@ -3,9 +3,9 @@ Estimates salary range for jobs that don't advertise it, using Claude.
 """
 import json
 import os
-from anthropic import AsyncAnthropic
+from backend.agents._client import make_client
 
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = make_client()
 
 PROMPT = """You are a UK compensation specialist.
 

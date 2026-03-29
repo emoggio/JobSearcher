@@ -8,13 +8,13 @@ import os
 import uuid
 from datetime import datetime
 import httpx
-from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.job import Job
 from backend.agents.salary_estimator import estimate_salary
+from backend.agents._client import make_client
 
 logger = logging.getLogger(__name__)
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = make_client()
 
 HEADERS = {
     "User-Agent": (

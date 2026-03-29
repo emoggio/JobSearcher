@@ -28,16 +28,50 @@ Self-hosted AI-powered job search platform. Scrapes multiple job boards, scores 
 ## Quick start
 
 ```bash
-# 1. Clone and copy env
+# 1. Clone
+git clone https://github.com/emoggio/JobSearcher.git
+cd JobSearcher
 cp .env.example .env
-# Edit .env — add ANTHROPIC_API_KEY and a random SCOUT_SECRET_KEY
+```
 
+**Edit `.env`** — two things are required:
+
+```env
+# Get your key at console.anthropic.com → API Keys
+ANTHROPIC_API_KEY=sk-ant-api03-your-real-key-here
+
+# Generate any random string, e.g.: python -c "import secrets; print(secrets.token_hex(32))"
+SCOUT_SECRET_KEY=any-long-random-string-here
+```
+
+> **Using Claude Code / a company gateway?**
+> If you're running Claude Code CLI in the same terminal, your company token is already active.
+> Run this once to copy it automatically into `.env`:
+> ```bash
+> python -c "
+> import json, os, re
+> cfg = json.load(open(os.path.expanduser('~/.claude/config.json')))
+> key = cfg.get('primaryApiKey', '')
+> base = os.getenv('ANTHROPIC_BASE_URL', '')
+> headers = os.getenv('ANTHROPIC_CUSTOM_HEADERS', '')
+> env = open('.env').read()
+> env = re.sub(r'ANTHROPIC_API_KEY=.*', f'ANTHROPIC_API_KEY={key}', env)
+> if base:
+>     env = re.sub(r'ANTHROPIC_BASE_URL=.*', f'ANTHROPIC_BASE_URL={base}', env) if 'ANTHROPIC_BASE_URL=' in env else env + f'\nANTHROPIC_BASE_URL={base}'
+> if headers:
+>     env = env + f'\nANTHROPIC_CUSTOM_HEADERS={headers}' if 'ANTHROPIC_CUSTOM_HEADERS=' not in env else re.sub(r'ANTHROPIC_CUSTOM_HEADERS=.*', f'ANTHROPIC_CUSTOM_HEADERS={headers}', env)
+> open('.env', 'w').write(env)
+> print('Done')
+> "
+> ```
+
+```bash
 # 2. Backend
 python -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r backend/requirements.txt
 playwright install chromium
-uvicorn backend.main:app --reload
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
 # 3. Frontend (separate terminal)
 cd frontend
@@ -45,7 +79,11 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 → register an account → upload your CV → click Search.
+Open **http://localhost:3000** → register an account → upload your CV → click Search.
+
+> **On your phone / another device on the same WiFi?**
+> Find your PC's local IP (`ipconfig` on Windows, `ifconfig` on Mac/Linux) and open
+> `http://<your-ip>:3000` on your phone. Make sure the backend runs with `--host 0.0.0.0`.
 
 ## Docker
 

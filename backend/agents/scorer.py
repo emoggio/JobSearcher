@@ -7,15 +7,15 @@ import json
 import logging
 import os
 import uuid
-from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from backend.models.job import Job
 from backend.models.user_job_score import UserJobScore
 from backend.agents.cv_tweaker import get_current_cv
+from backend.agents._client import make_client
 
 logger = logging.getLogger(__name__)
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = make_client()
 
 SCORE_PROMPT = """You are an expert recruiter and hiring manager.
 

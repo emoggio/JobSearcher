@@ -6,13 +6,13 @@ import json
 import logging
 import os
 from pathlib import Path
-from anthropic import AsyncAnthropic
 from sqlalchemy import select
 from backend.db.database import SessionLocal
 from backend.models.job import Job
+from backend.agents._client import make_client
 
 logger = logging.getLogger(__name__)
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = make_client()
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
 CV_DIR = _ROOT / "cv"

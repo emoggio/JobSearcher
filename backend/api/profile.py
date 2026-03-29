@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from backend.db.database import get_db
 from backend.models.user_profile import UserProfile
+from backend.agents._client import make_client as _make_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -104,17 +105,15 @@ async def get_search_context(db: AsyncSession, user_id: str = "legacy") -> str:
 
 async def _build_search_context(db: AsyncSession, user_id: str, qa_pairs: list[dict]) -> str:
     from backend.agents.cv_tweaker import get_current_cv
-    from anthropic import AsyncAnthropic
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key or not qa_pairs:
+    if not os.getenv("ANTHROPIC_API_KEY") or not qa_pairs:
         return ""
 
     cv_profile = await get_current_cv(user_id=user_id)
     if not cv_profile:
         return ""
 
-    client = AsyncAnthropic(api_key=api_key)
+    client = _make_client()
     cv_text = json.dumps(cv_profile)[:3000]
     qa_text = "\n".join(
         f"Q: {p['question']}\nA: {p['answer']}"
@@ -154,18 +153,16 @@ async def get_profile(request: Request, db: AsyncSession = Depends(get_db)):
 @router.post("/generate-questions")
 async def generate_questions(request: Request, db: AsyncSession = Depends(get_db)):
     from backend.agents.cv_tweaker import get_current_cv
-    from anthropic import AsyncAnthropic
 
     user_id = _user_id(request)
     cv_profile = await get_current_cv(user_id=user_id)
     if not cv_profile:
         return {"questions": [], "error": "No CV uploaded yet — please upload your CV first."}
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not os.getenv("ANTHROPIC_API_KEY"):
         return {"questions": [], "error": "ANTHROPIC_API_KEY not set"}
 
-    client = AsyncAnthropic(api_key=api_key)
+    client = _make_client()
     cv_text = json.dumps(cv_profile)[:4000]
 
     try:
@@ -221,14 +218,12 @@ class ChatRequest(BaseModel):
 @router.post("/chat")
 async def chat(body: ChatRequest, request: Request, db: AsyncSession = Depends(get_db)):
     from backend.agents.cv_tweaker import get_current_cv
-    from anthropic import AsyncAnthropic
 
     user_id = _user_id(request)
     username = getattr(request.state, "username", user_id)
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return {"reply": "ANTHROPIC_API_KEY not set — cannot use chat.", "context_updated": False}
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        return {"reply": "No AI API key configured — cannot use chat.", "context_updated": False}
 
     profile = await _get_or_create_profile(db, user_id)
     search_context = profile.search_context or "None yet."
@@ -241,7 +236,7 @@ async def chat(body: ChatRequest, request: Request, db: AsyncSession = Depends(g
         search_context=search_context,
     )
 
-    client = AsyncAnthropic(api_key=api_key)
+    client = _make_client()
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
 
     try:
@@ -272,17 +267,14 @@ async def _update_context_from_chat(
     last_reply: str,
     cv_summary: str,
 ) -> bool:
-    from anthropic import AsyncAnthropic
-
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not os.getenv("ANTHROPIC_API_KEY"):
         return False
 
     user_count = sum(1 for m in messages if m.role == "user")
     if user_count % 3 != 0:
         return False
 
-    client = AsyncAnthropic(api_key=api_key)
+    client = _make_client()
     convo = "\n".join(f"{m.role.upper()}: {m.content}" for m in messages[-8:])
     convo += f"\nASSISTANT: {last_reply}"
 

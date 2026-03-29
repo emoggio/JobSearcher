@@ -4,14 +4,14 @@ Uses LinkedIn search URLs + Claude to draft personalised outreach messages.
 """
 import os
 import json
-from anthropic import AsyncAnthropic
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from backend.models.job import Job
 from backend.models.recruiter import Recruiter
 from backend.agents.cv_tweaker import get_current_cv
+from backend.agents._client import make_client
 
-client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = make_client()
 
 
 def linkedin_search_url(company: str, role: str) -> str:
