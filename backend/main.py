@@ -94,3 +94,12 @@ async def get_logs(lines: int = 100):
         return {"lines": all_lines[-lines:]}
     except FileNotFoundError:
         return {"lines": []}
+
+
+@app.delete("/api/logs")
+async def clear_logs():
+    try:
+        LOG_PATH.write_text("", encoding="utf-8")
+    except Exception:
+        pass
+    return {"status": "cleared"}

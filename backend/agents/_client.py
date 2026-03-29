@@ -13,23 +13,23 @@ logger = logging.getLogger(__name__)
 
 def _parse_custom_headers(raw: str) -> dict[str, str]:
     """
-    Parse ANTHROPIC_CUSTOM_HEADERS which Claude Code sets as a
-    comma-separated list of 'key: value' pairs, possibly JSON-encoded.
-    Example:
-      x-portkey-config: abc123, "cgw_session_id": "xyz", ...
+    Parse ANTHROPIC_CUSTOM_HEADERS.
+    Supports two formats:
+      1. JSON object: {"x-portkey-config": "abc", ...}  (preferred, set by Scout)
+      2. Comma-separated key: value pairs (set by Claude Code CLI directly)
     """
     if not raw:
         return {}
-    headers: dict[str, str] = {}
-    # Try JSON object first
+    # Try JSON object first (our format)
     try:
         parsed = json.loads(raw)
         if isinstance(parsed, dict):
             return {str(k): str(v) for k, v in parsed.items()}
     except Exception:
         pass
-    # Fall back to splitting on commas, then on first colon
-    for part in raw.split(","):
+    # Fall back: newline or comma-separated "key: value" lines
+    headers: dict[str, str] = {}
+    for part in raw.replace("\n", ",").split(","):
         part = part.strip()
         if ":" in part:
             k, _, v = part.partition(":")
