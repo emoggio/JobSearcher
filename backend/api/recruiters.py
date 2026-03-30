@@ -34,6 +34,26 @@ async def list_recruiters(request: Request, db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
+@router.patch("/{recruiter_id}")
+async def update_recruiter(
+    recruiter_id: str, body: dict, request: Request, db: AsyncSession = Depends(get_db)
+):
+    user_id = _user_id(request)
+    result = await db.execute(
+        select(Recruiter).where(
+            Recruiter.id == recruiter_id,
+            or_(Recruiter.user_id == user_id, Recruiter.user_id.is_(None)),
+        )
+    )
+    rec = result.scalar_one_or_none()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recruiter not found")
+    if "contacted" in body:
+        rec.contacted = body["contacted"]
+    await db.commit()
+    return {"status": "updated"}
+
+
 @router.patch("/{recruiter_id}/contacted")
 async def mark_contacted(
     recruiter_id: str, status: str, request: Request, db: AsyncSession = Depends(get_db)

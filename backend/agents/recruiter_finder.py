@@ -2,8 +2,7 @@
 Finds LinkedIn recruiters and hiring managers at companies with active matching roles.
 Uses LinkedIn search URLs + Claude to draft personalised outreach messages.
 """
-import os
-import json
+import urllib.parse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from backend.models.job import Job
@@ -13,27 +12,56 @@ from backend.agents._client import make_client
 
 client = make_client()
 
+TARGETS_PROMPT = """Given this job title and company, return a JSON object with these fields:
+- department: the team/function this role sits in (e.g. "Engineering", "Product", "Operations", "Finance")
+- seniority: the level of the role (e.g. "Senior", "Director", "VP", "Manager", "Lead")
+- hiring_manager_titles: list of 2-3 likely titles of the person who would hire for this role
+- recruiter_keywords: 2-3 keywords a specialist recruiter for this function would have in their title
 
-def linkedin_search_url(company: str, role: str) -> str:
-    """Build a LinkedIn people search URL for recruiters at a company."""
-    import urllib.parse
-    query = urllib.parse.quote(f'"{company}" recruiter OR "talent acquisition" OR "hiring manager" {role}')
-    return f"https://www.linkedin.com/search/results/people/?keywords={query}"
+Job title: {title}
+Company: {company}
+
+Return valid JSON only."""
 
 
-async def draft_outreach(cv: dict, job: Job) -> str:
+def _linkedin_url(keywords: str) -> str:
+    return f"https://www.linkedin.com/search/results/people/?keywords={urllib.parse.quote(keywords)}&origin=GLOBAL_SEARCH_HEADER"
+
+
+async def _get_targets(job: Job) -> dict:
+    """Use Claude to extract department, seniority, and likely people to contact."""
+    try:
+        response = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": TARGETS_PROMPT.format(
+                title=job.title, company=job.company
+            )}],
+        )
+        import json
+        return json.loads(response.content[0].text)
+    except Exception:
+        return {}
+
+
+async def draft_outreach(cv: dict, job: Job, target_type: str = "recruiter") -> str:
+    if target_type == "hiring_manager":
+        audience = f"the hiring manager for the {job.title} role"
+    else:
+        audience = f"a recruiter at {job.company} hiring for {job.title}"
+
     prompt = f"""Write a concise, professional LinkedIn connection request message (max 300 chars)
-from this candidate to a recruiter at {job.company} who is hiring for a {job.title} role.
+from this candidate to {audience}.
 
-The message should feel personal, reference the role, and highlight one relevant strength.
+Reference the specific role and company. Highlight one directly relevant strength. Feel human, not templated.
 
 Candidate summary: {cv.get('summary', '')}
 Key skills: {', '.join(cv.get('skills', [])[:5])}
 
-Return only the message text."""
+Return only the message text, no quotes."""
 
     response = await client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=128,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -47,29 +75,58 @@ async def find_recruiters_for_job(job_id: str, db: AsyncSession, user_id: str = 
         return []
 
     cv = await get_current_cv(user_id=user_id)
-    message = await draft_outreach(cv or {}, job)
-    search_url = linkedin_search_url(job.company, job.title)
+    targets = await _get_targets(job)
 
-    # Persist as a recruiter lead (LinkedIn search — user clicks through manually)
-    recruiter = Recruiter(
-        name="LinkedIn Search",
-        title="Recruiter / Hiring Manager",
-        company=job.company,
-        linkedin_url=search_url,
-        job_id=job_id,
-        message_draft=message,
-        user_id=user_id,
-    )
-    db.add(recruiter)
-    await db.commit()
-    await db.refresh(recruiter)
+    department = targets.get("department", "")
+    recruiter_kw = " OR ".join(f'"{k}"' for k in targets.get("recruiter_keywords", ["recruiter", "talent acquisition"]))
+    hm_titles = targets.get("hiring_manager_titles", [])
 
-    return [
+    # Build 3 targeted searches
+    searches = [
         {
-            "id": recruiter.id,
+            "label": "Internal Recruiter",
+            "title": f"Recruiter · {department or job.company}",
+            "keywords": f'"{job.company}" ({recruiter_kw}) {department}',
+            "type": "recruiter",
+        },
+        {
+            "label": "Hiring Manager",
+            "title": hm_titles[0] if hm_titles else "Hiring Manager",
+            "keywords": f'"{job.company}" ({" OR ".join(f"{t}" for t in hm_titles[:2]) if hm_titles else "hiring manager"}) {department}',
+            "type": "hiring_manager",
+        },
+        {
+            "label": "Team / Peer",
+            "title": f"{department} team · {job.company}",
+            "keywords": f'"{job.company}" "{department}" {targets.get("seniority", "")}',
+            "type": "peer",
+        },
+    ]
+
+    saved = []
+    for s in searches:
+        url = _linkedin_url(s["keywords"])
+        message = await draft_outreach(cv or {}, job, s["type"])
+        rec = Recruiter(
+            name=s["label"],
+            title=s["title"],
+            company=job.company,
+            linkedin_url=url,
+            job_id=job_id,
+            message_draft=message,
+            user_id=user_id,
+        )
+        db.add(rec)
+        await db.flush()
+        saved.append({
+            "id": rec.id,
+            "label": s["label"],
+            "title": s["title"],
             "company": job.company,
             "role": job.title,
-            "linkedin_search_url": search_url,
+            "linkedin_search_url": url,
             "suggested_message": message,
-        }
-    ]
+        })
+
+    await db.commit()
+    return saved

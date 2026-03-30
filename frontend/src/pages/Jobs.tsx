@@ -376,10 +376,15 @@ export default function Jobs() {
     mutationFn: (url: string) => importJobUrl(url),
     onSuccess: (data) => {
       setImportUrl("");
-      setImportStatus({ ok: true, msg: `Imported: ${data.data?.title || "job"} @ ${data.data?.company || ""}` });
+      setImportStatus({ ok: true, msg: `Imported: ${data.data?.title || "job"} @ ${data.data?.company || ""} — scoring…` });
       setLastImportedId(data.data?.id ?? null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
-      setTimeout(() => setImportStatus(null), 5000);
+      // Re-fetch after 8s to pick up the background score
+      setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ["jobs"] });
+        setImportStatus({ ok: true, msg: `Imported: ${data.data?.title || "job"} @ ${data.data?.company || ""}` });
+      }, 8000);
+      setTimeout(() => setImportStatus(null), 14000);
     },
     onError: (err: any) => {
       const detail = err.response?.data?.detail || "";
