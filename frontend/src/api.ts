@@ -58,8 +58,11 @@ export const listRecruiters = () => api.get("/api/recruiters");
 // Calendar
 export const getCalendar = () => api.get("/api/calendar");
 
-// Import job from URL
-export const importJobUrl = (url: string) => api.post("/api/jobs/import", { url });
+// Import job from URL or free-form text
+export const importJobUrl = (input: string) => {
+  const isUrl = /^https?:\/\//i.test(input);
+  return api.post("/api/jobs/import", isUrl ? { url: input } : { text: input });
+};
 
 // Logs
 export const getLogs = (lines = 100) => api.get("/api/logs", { params: { lines } });

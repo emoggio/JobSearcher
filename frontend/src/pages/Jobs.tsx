@@ -9,7 +9,7 @@ import { listJobs, searchJobs, createApplication, tweakCV, importJobUrl, getLogs
 import api from "../api";
 import { formatDistanceToNow, format, parseISO } from "date-fns";
 
-const SOURCES = ["linkedin", "indeed", "reed", "adzuna", "glassdoor", "totaljobs", "cwjobs", "wellfound", "google"];
+const SOURCES = ["linkedin", "indeed", "reed", "adzuna", "glassdoor", "totaljobs", "cwjobs", "wellfound", "google", "manual"];
 
 const SOURCE_COLORS: Record<string, string> = {
   linkedin: "bg-blue-500/15 text-blue-400 border-blue-500/30",
@@ -21,6 +21,7 @@ const SOURCE_COLORS: Record<string, string> = {
   cwjobs: "bg-pink-500/15 text-pink-400 border-pink-500/30",
   wellfound: "bg-teal-500/15 text-teal-400 border-teal-500/30",
   google: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+  manual: "bg-purple-500/25 text-purple-300 border-purple-400/50",
 };
 
 const INDUSTRIES = [
@@ -97,6 +98,7 @@ function JobCard({
   return (
     <div className={`bg-gray-900 border rounded-xl overflow-hidden transition-all ${
       highlighted ? "border-emerald-600/60 shadow-lg shadow-emerald-950/30 ring-1 ring-emerald-600/20" :
+      job.source === "manual" ? "border-purple-600/50 shadow-sm shadow-purple-950/20" :
       tracked ? "border-indigo-600/40 bg-indigo-950/10" :
       expanded ? "border-indigo-700/50 shadow-lg shadow-indigo-950/30" : "border-gray-800 hover:border-gray-700"
     }`}>
@@ -104,6 +106,12 @@ function JobCard({
         <div className="bg-emerald-900/30 border-b border-emerald-800/40 px-4 py-1.5 flex items-center gap-1.5">
           <CheckCircle2 size={11} className="text-emerald-400" />
           <span className="text-[11px] text-emerald-400 font-medium">Imported just now</span>
+        </div>
+      )}
+      {job.source === "manual" && !highlighted && (
+        <div className="bg-purple-900/25 border-b border-purple-700/30 px-4 py-1 flex items-center gap-1.5">
+          <Link size={10} className="text-purple-400" />
+          <span className="text-[10px] text-purple-300 font-medium">Manually imported</span>
         </div>
       )}
       {tracked && !highlighted && (
@@ -373,9 +381,11 @@ export default function Jobs() {
       qc.invalidateQueries({ queryKey: ["jobs"] });
       setTimeout(() => setImportStatus(null), 5000);
     },
-    onError: () => {
-      setImportStatus({ ok: false, msg: "Could not import — try a different URL or paste the job text." });
-      setTimeout(() => setImportStatus(null), 6000);
+    onError: (err: any) => {
+      const detail = err.response?.data?.detail || "";
+      const msg = detail || "Could not import — try pasting the job title + company name instead.";
+      setImportStatus({ ok: false, msg });
+      setTimeout(() => setImportStatus(null), 8000);
     },
   });
 
@@ -472,12 +482,11 @@ export default function Jobs() {
         <div className="flex-1 flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-lg px-3 py-2.5 focus-within:border-indigo-500 transition-colors min-w-0">
           <Link size={13} className="text-gray-600 shrink-0" />
           <input
-            type="url"
-            inputMode="url"
+            type="text"
             value={importUrl}
             onChange={(e) => setImportUrl(e.target.value)}
-            placeholder="Paste a job URL to import…"
-            className="flex-1 bg-transparent text-sm outline-none placeholder-gray-700 min-w-0"
+            placeholder="Paste a job URL or type job title + company…"
+            className="flex-1 bg-transparent text-sm outline-none placeholder-gray-600 text-white min-w-0"
           />
         </div>
         <button

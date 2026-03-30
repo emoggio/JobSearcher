@@ -166,16 +166,38 @@ async def clear_scores(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/import")
-async def import_job_url(request: Request, body: dict, db: AsyncSession = Depends(get_db)):
-    """Import a job from a URL provided by the user."""
-    from backend.agents.job_importer import import_from_url
+async def import_job_url(request: Request, background_tasks: BackgroundTasks, body: dict, db: AsyncSession = Depends(get_db)):
+    """Import a job from a URL or free-form text, then score it for the current user."""
+    from backend.agents.job_importer import import_from_url, import_from_text
+    user_id = _user_id(request)
     url = body.get("url", "").strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="URL required")
-    job = await import_from_url(url, db)
-    if not job:
-        raise HTTPException(status_code=422, detail="Could not parse job from URL")
+    text = body.get("text", "").strip()
+
+    if url:
+        job = await import_from_url(url, db)
+        if not job:
+            raise HTTPException(
+                status_code=422,
+                detail="Could not fetch that URL (LinkedIn requires login). Paste the job description text instead."
+            )
+    elif text:
+        job = await import_from_text(text, db)
+        if not job:
+            raise HTTPException(status_code=422, detail="Could not parse job from text")
+    else:
+        raise HTTPException(status_code=400, detail="Provide a URL or job text")
+
+    # Score the imported job in the background for this user
+    background_tasks.add_task(_score_imported, job.id, user_id)
     return job
+
+
+async def _score_imported(job_id: str, user_id: str):
+    try:
+        async with SessionLocal() as db:
+            await score_jobs(db, job_ids=[job_id], user_id=user_id)
+    except Exception as e:
+        logger.warning("Failed to score imported job %s: %s", job_id, e)
 
 
 @router.get("/{job_id}")
