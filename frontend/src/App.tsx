@@ -1,6 +1,6 @@
 import { Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Briefcase, Users, Calendar, FileText, LayoutDashboard, MessageSquare, Zap } from "lucide-react";
+import { Briefcase, Users, Calendar, FileText, LayoutDashboard, MessageSquare, Zap, LogOut } from "lucide-react";
 import { getHealth } from "./api";
 import Jobs from "./pages/Jobs";
 import Recruiters from "./pages/Recruiters";
@@ -94,6 +94,15 @@ function AppShell() {
             {label}
           </NavLink>
         ))}
+        <div className="mt-auto pt-4 border-t border-gray-800">
+          <button
+            onClick={() => { localStorage.removeItem("scout_token"); window.location.href = "/login"; }}
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 w-full transition-colors"
+          >
+            <LogOut size={16} />
+            Log out
+          </button>
+        </div>
       </aside>
 
       {/* Mobile top bar */}
@@ -102,6 +111,13 @@ function AppShell() {
           <h1 className="text-lg font-bold tracking-tight text-white">Scout</h1>
           {aiConnected && <Zap size={12} className="text-emerald-400" aria-label="AI connected" />}
         </div>
+        <button
+          onClick={() => { localStorage.removeItem("scout_token"); window.location.href = "/login"; }}
+          className="text-gray-400 hover:text-white p-1"
+          aria-label="Log out"
+        >
+          <LogOut size={18} />
+        </button>
       </header>
 
       {/* Main content */}

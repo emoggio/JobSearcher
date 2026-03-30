@@ -48,7 +48,7 @@ export default function Login() {
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 autoFocus
-                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-indigo-500 transition-colors placeholder-gray-700"
+                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500 transition-colors placeholder-gray-600"
                 placeholder="your username"
               />
             </div>
@@ -59,7 +59,7 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-indigo-500 transition-colors placeholder-gray-700"
+                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-500 transition-colors placeholder-gray-600"
                 placeholder="••••••••"
               />
             </div>
