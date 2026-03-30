@@ -71,7 +71,7 @@ def _scrape_page(page, url: str, jobs: list, seen_urls: set) -> int:
         return 0
 
 
-def _scrape_sync(params: dict) -> list[dict]:
+def _scrape_sync(params: dict, linkedin_cookie: str | None = None) -> list[dict]:
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -99,12 +99,20 @@ def _scrape_sync(params: dict) -> list[dict]:
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
         )
+        context = None
         try:
             context = browser.new_context(
                 user_agent=_UA,
                 viewport={"width": 1440, "height": 900},
                 locale="en-GB",
             )
+            if linkedin_cookie:
+                context.add_cookies([{
+                    "name": "li_at",
+                    "value": linkedin_cookie,
+                    "domain": ".linkedin.com",
+                    "path": "/",
+                }])
             page = context.new_page()
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             for page_num in range(PAGES_TO_SCRAPE):
@@ -117,13 +125,14 @@ def _scrape_sync(params: dict) -> list[dict]:
         except Exception as e:
             logger.warning("LinkedIn scrape failed: %s", e)
         finally:
-            context.close()
+            if context:
+                context.close()
             browser.close()
 
     logger.info("LinkedIn: %d jobs scraped (%d pages)", len(jobs), PAGES_TO_SCRAPE)
     return jobs
 
 
-async def scrape(params: dict) -> list[dict]:
+async def scrape(params: dict, linkedin_cookie: str | None = None) -> list[dict]:
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_executor, _scrape_sync, params)
+    return await loop.run_in_executor(_executor, _scrape_sync, params, linkedin_cookie)

@@ -18,6 +18,8 @@ from backend.db.database import init_db
 from backend.api import jobs, cv, recruiters, applications, calendar, form
 from backend.api import auth as auth_router
 from backend.api import profile as profile_router
+from backend.api import settings as settings_router
+from backend.api import search_profiles as search_profiles_router
 
 setup_logging()
 
@@ -72,11 +74,13 @@ app.include_router(applications.router, prefix="/api/applications", tags=["appli
 app.include_router(calendar.router, prefix="/api/calendar", tags=["calendar"])
 app.include_router(form.router, prefix="/api/form", tags=["form"])
 app.include_router(profile_router.router, prefix="/api/profile", tags=["profile"])
+app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
+app.include_router(search_profiles_router.router, prefix="/api/search-profiles", tags=["search-profiles"])
 
 
 @app.on_event("startup")
 async def startup():
-    from backend.models import job, application, recruiter, user, user_profile, user_job_score  # noqa: F401
+    from backend.models import job, application, recruiter, user, user_profile, user_job_score, search_profile  # noqa: F401
     await init_db()
 
 

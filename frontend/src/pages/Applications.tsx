@@ -25,6 +25,37 @@ function ScoreBadge({ score }: { score?: number | null }) {
   );
 }
 
+type OutcomeValue = null | "ghosted" | "rejected" | "offer" | "withdrawn";
+
+const OUTCOME_OPTIONS: { value: OutcomeValue; label: string }[] = [
+  { value: null,        label: "(none)" },
+  { value: "ghosted",   label: "Ghosted" },
+  { value: "rejected",  label: "Rejected" },
+  { value: "offer",     label: "Offer received" },
+  { value: "withdrawn", label: "Withdrawn" },
+];
+
+function OutcomeBadge({ outcome }: { outcome?: OutcomeValue }) {
+  if (!outcome) return null;
+  const styles: Record<string, string> = {
+    offer:     "bg-emerald-900/40 text-emerald-300 border-emerald-700/40",
+    rejected:  "bg-red-900/40 text-red-300 border-red-700/40",
+    ghosted:   "bg-gray-800 text-gray-400 border-gray-700/40",
+    withdrawn: "bg-gray-800 text-gray-400 border-gray-700/40",
+  };
+  const labels: Record<string, string> = {
+    offer:     "🎉 Offer",
+    rejected:  "Rejected",
+    ghosted:   "Ghosted",
+    withdrawn: "Withdrawn",
+  };
+  return (
+    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${styles[outcome]}`}>
+      {labels[outcome]}
+    </span>
+  );
+}
+
 function AppCard({ app, onDragStart }: { app: any; onDragStart: (e: React.DragEvent, id: string) => void }) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(false);
@@ -33,6 +64,7 @@ function AppCard({ app, onDragStart }: { app: any; onDragStart: (e: React.DragEv
   const [nextDate, setNextDate] = useState(
     app.next_action_date ? app.next_action_date.slice(0, 10) : ""
   );
+  const [outcome, setOutcome] = useState<OutcomeValue>(app.outcome ?? null);
 
   const { mutate: save, isPending: saving } = useMutation({
     mutationFn: () =>
@@ -40,6 +72,7 @@ function AppCard({ app, onDragStart }: { app: any; onDragStart: (e: React.DragEv
         notes: notes || undefined,
         next_action: nextAction || undefined,
         next_action_date: nextDate || undefined,
+        outcome: outcome ?? null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["applications"] }),
   });
@@ -66,7 +99,10 @@ function AppCard({ app, onDragStart }: { app: any; onDragStart: (e: React.DragEv
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-1">
               <p className="text-xs font-semibold text-white leading-tight">{app.job_title}</p>
-              <ScoreBadge score={app.job_score} />
+              <div className="flex items-center gap-1 shrink-0">
+                <OutcomeBadge outcome={outcome} />
+                <ScoreBadge score={app.job_score} />
+              </div>
             </div>
             <p className="text-[11px] text-gray-500 truncate">{app.job_company}</p>
             {app.applied_at && (
@@ -119,6 +155,20 @@ function AppCard({ app, onDragStart }: { app: any; onDragStart: (e: React.DragEv
               placeholder="Notes…"
             />
           </div>
+          {/* Outcome */}
+          <div>
+            <label className="text-[10px] text-gray-600 uppercase tracking-wide block mb-1">Outcome</label>
+            <select
+              value={outcome ?? ""}
+              onChange={(e) => setOutcome((e.target.value || null) as OutcomeValue)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-indigo-500"
+            >
+              {OUTCOME_OPTIONS.map((o) => (
+                <option key={String(o.value)} value={o.value ?? ""}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Move status — handy on mobile where drag-and-drop doesn't work */}
           <div className="flex items-center gap-1.5">
             <ArrowRightLeft size={10} className="text-gray-600 shrink-0" />

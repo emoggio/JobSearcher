@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getProfile, profileChat, generateProfileQuestions, saveProfileAnswers, clearProfileData } from "../api";
+import { getProfile, profileChat, generateProfileQuestions, saveProfileAnswers, clearProfileData, getSkillsGap } from "../api";
 import {
   MessageSquare, Send, Loader2, RefreshCw, CheckCircle2,
-  ChevronDown, ChevronUp, Sparkles, User, Bot, Trash2,
+  ChevronDown, ChevronUp, Sparkles, User, Bot, Trash2, BarChart2,
 } from "lucide-react";
 
 interface Message {
@@ -101,6 +101,29 @@ export default function Profile() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["profile"] });
       setShowQA(false);
+    },
+  });
+
+  const [skillsGapResults, setSkillsGapResults] = useState<any[] | null>(null);
+  const [skillsGapMsg, setSkillsGapMsg] = useState<string | null>(null);
+  const { mutate: analyseGap, isPending: analysingGap } = useMutation({
+    mutationFn: () => getSkillsGap(),
+    onSuccess: (res) => {
+      const data = res.data;
+      if (data?.no_jobs) {
+        setSkillsGapMsg("Run a search and score jobs first");
+        setSkillsGapResults(null);
+      } else if (!data?.gaps || data.gaps.length === 0) {
+        setSkillsGapMsg("Your CV covers the key skills well");
+        setSkillsGapResults(null);
+      } else {
+        setSkillsGapResults(data.gaps);
+        setSkillsGapMsg(null);
+      }
+    },
+    onError: () => {
+      setSkillsGapMsg("Failed to fetch skills gap. Please try again.");
+      setSkillsGapResults(null);
     },
   });
 
@@ -227,6 +250,66 @@ export default function Profile() {
                 </button>
               </>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Skills Gap Analysis */}
+      <div className="shrink-0 px-4 md:px-6 py-3 border-b border-gray-800/50">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <BarChart2 size={13} className="text-indigo-400" />
+            <span className="font-medium">Skills Gap Analysis</span>
+          </div>
+          <button
+            onClick={() => analyseGap()}
+            disabled={analysingGap}
+            className="flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {analysingGap ? <Loader2 size={11} className="animate-spin" /> : <BarChart2 size={11} />}
+            Analyse my skills gap
+          </button>
+        </div>
+
+        {analysingGap && (
+          <div className="flex items-center gap-2 text-xs text-gray-500 py-2">
+            <Loader2 size={12} className="animate-spin" />
+            Analysing your CV against matching jobs…
+          </div>
+        )}
+
+        {!analysingGap && skillsGapMsg && (
+          <p className="text-xs text-gray-500 italic py-1">{skillsGapMsg}</p>
+        )}
+
+        {!analysingGap && skillsGapResults && skillsGapResults.length > 0 && (
+          <div className="mt-2 space-y-2 max-h-52 overflow-y-auto pr-1">
+            {skillsGapResults.map((gap: any, i: number) => {
+              const priorityStyles: Record<string, string> = {
+                high:   "bg-red-900/40 text-red-300 border-red-700/40",
+                medium: "bg-amber-900/40 text-amber-300 border-amber-700/40",
+                low:    "bg-gray-800 text-gray-400 border-gray-700/40",
+              };
+              const p = (gap.priority || "low").toLowerCase();
+              return (
+                <div key={i} className="bg-gray-900 border border-gray-800 rounded-xl px-3 py-2.5">
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="text-xs font-semibold text-white">{gap.skill}</p>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${priorityStyles[p] ?? priorityStyles.low}`}>
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </span>
+                  </div>
+                  {gap.frequency != null && (
+                    <p className="text-[11px] text-gray-500">
+                      Appears in {gap.frequency} matching job{gap.frequency !== 1 ? "s" : ""}
+                    </p>
+                  )}
+                  {gap.suggestion && (
+                    <p className="text-[11px] text-gray-600 italic mt-0.5">{gap.suggestion}</p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

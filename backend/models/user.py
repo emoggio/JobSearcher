@@ -13,3 +13,4 @@ class User(Base):
     recovery_code_hash = Column(String, nullable=True)  # sha256(recovery_code).hexdigest()
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
+    linkedin_cookie = Column(String, nullable=True)

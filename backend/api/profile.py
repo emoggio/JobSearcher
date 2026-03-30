@@ -311,6 +311,14 @@ Write only the updated profile paragraph, no preamble."""
     return False
 
 
+@router.get("/skills-gap")
+async def skills_gap(request: Request, db: AsyncSession = Depends(get_db)):
+    from backend.agents.skills_gap import analyse_skills_gap
+    user_id = _user_id(request)
+    result = await analyse_skills_gap(db, user_id)
+    return result
+
+
 @router.delete("/data")
 async def clear_profile_data(request: Request, db: AsyncSession = Depends(get_db)):
     """Clear all saved Q&A answers and search context for the current user."""

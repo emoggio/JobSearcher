@@ -5,8 +5,9 @@ import asyncio
 import logging
 import os
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from backend.models.job import Job
+from backend.models.user import User
 from backend.agents.scorer import score_jobs
 from backend.agents.salary_estimator import estimate_salary
 from backend.agents.local_scorer import local_score, local_score_reason, local_score_gaps
@@ -64,12 +65,21 @@ async def run_search(db: AsyncSession, user_id: str = "legacy", deep: bool = Fal
     else:
         original = {}
 
+    # Fetch the user's LinkedIn cookie if available
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user_obj = user_result.scalar_one_or_none()
+    linkedin_cookie = user_obj.linkedin_cookie if user_obj else None
+
     source_map = [
         (source, params)
         for params in SEARCH_PARAM_SETS
         for source in SOURCES
     ]
-    tasks = [source.scrape(params) for source, params in source_map]
+    tasks = [
+        source.scrape(params, linkedin_cookie=linkedin_cookie) if source is linkedin
+        else source.scrape(params)
+        for source, params in source_map
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     existing_urls: set[str] = set(
@@ -115,8 +125,26 @@ async def run_search(db: AsyncSession, user_id: str = "legacy", deep: bool = Fal
     if os.getenv("ANTHROPIC_API_KEY") and raw_new:
         await asyncio.gather(*[maybe_estimate(j) for j in raw_new])
 
+    # In-memory set to catch same-batch duplicates before any DB queries
+    seen_title_company: set[tuple[str, str]] = set()
+
     new_jobs: list[Job] = []
     for job_data in raw_new:
+        title_lower = (job_data.get("title") or "").strip().lower()
+        company_lower = (job_data.get("company") or "").strip().lower()
+        key = (title_lower, company_lower)
+        if key in seen_title_company:
+            continue
+        existing = await db.execute(
+            select(Job).where(
+                func.lower(Job.title) == title_lower,
+                func.lower(Job.company) == company_lower,
+            )
+        )
+        if existing.scalar_one_or_none():
+            continue  # skip DB duplicate
+        seen_title_company.add(key)
+
         job = Job(**_safe_job_fields(job_data), is_gaming=is_gaming(job_data))
         # Apply instant local score so UI always shows something immediately
         if job.compatibility_score is None:

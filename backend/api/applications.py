@@ -27,6 +27,7 @@ class ApplicationUpdate(BaseModel):
     next_action: Optional[str] = None
     next_action_date: Optional[datetime] = None
     notes: Optional[str] = None
+    outcome: Optional[str] = None
 
 
 @router.get("")
@@ -60,6 +61,7 @@ async def list_applications(request: Request, db: AsyncSession = Depends(get_db)
             "next_action": app.next_action,
             "next_action_date": app.next_action_date,
             "notes": app.notes,
+            "outcome": app.outcome,
         })
     return apps
 

@@ -4,10 +4,15 @@ import {
   Search, ExternalLink, Star, Clock, Loader2, ChevronDown,
   Lightbulb, CheckCircle2, Link, ScrollText, Users, Building2,
   MapPin, Banknote, Calendar, ChevronRight, X, Briefcase,
+  Mail, BookOpen, ChevronUp, FileText, Bookmark, Columns,
 } from "lucide-react";
-import { listJobs, searchJobs, createApplication, tweakCV, importJobUrl, getLogs, listApplications } from "../api";
+import {
+  listJobs, searchJobs, createApplication, tweakCV, importJobUrl, getLogs, listApplications,
+  generateCoverLetter, getInterviewPrep, getCompanyResearch, saveJobNotes,
+  listSearchProfiles, createSearchProfile, deleteSearchProfile,
+} from "../api";
 import api from "../api";
-import { formatDistanceToNow, format, parseISO } from "date-fns";
+import { formatDistanceToNow, format, parseISO, differenceInDays } from "date-fns";
 
 const SOURCES = ["linkedin", "indeed", "reed", "adzuna", "glassdoor", "totaljobs", "cwjobs", "wellfound", "google", "manual"];
 
@@ -28,6 +33,13 @@ const INDUSTRIES = [
   "Gaming", "Finance", "Consulting", "MedTech / HealthTech",
   "SaaS / Tech", "Energy", "Infrastructure", "Media", "Retail", "Government",
 ];
+
+const INTERVIEW_TYPE_COLORS: Record<string, string> = {
+  behavioural: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+  technical: "bg-purple-500/20 text-purple-300 border-purple-500/30",
+  situational: "bg-amber-500/20 text-amber-300 border-amber-500/30",
+  company: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+};
 
 function ScoreBadge({ score }: { score: number | null }) {
   if (score == null) return null;
@@ -69,14 +81,29 @@ function formatDate(datePosted?: string | null, dateScraped?: string | null) {
   try {
     const dt = parseISO(d);
     const distance = formatDistanceToNow(dt, { addSuffix: true });
-    return { distance, full: format(dt, "d MMM yyyy") };
+    return { distance, full: format(dt, "d MMM yyyy"), dt };
   } catch {
     return null;
   }
 }
 
+function isClosingSoon(datePosted?: string | null, dateScraped?: string | null): boolean {
+  const d = datePosted || dateScraped;
+  if (!d) return false;
+  try {
+    const dt = parseISO(d);
+    return differenceInDays(new Date(), dt) > 20;
+  } catch {
+    return false;
+  }
+}
+
 function JobCard({
   job, onApply, onTweak, tweaking, applying, highlighted, tracked,
+  onCoverLetter, coverLettering,
+  onInterviewPrep, interviewPrepping,
+  compareIds, onToggleCompare,
+  companyResearchMap, onFetchCompanyResearch,
 }: {
   job: any;
   onApply: (id: string) => void;
@@ -85,18 +112,41 @@ function JobCard({
   applying: boolean;
   highlighted?: boolean;
   tracked?: boolean;
+  onCoverLetter: (id: string) => void;
+  coverLettering: boolean;
+  onInterviewPrep: (id: string) => void;
+  interviewPrepping: boolean;
+  compareIds: Set<string>;
+  onToggleCompare: (id: string) => void;
+  companyResearchMap: Record<string, any>;
+  onFetchCompanyResearch: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [companyIntelOpen, setCompanyIntelOpen] = useState(false);
+  const [notes, setNotes] = useState<string>(job.user_notes ?? "");
   const salary = formatSalary(job.salary_min, job.salary_max);
   const date = formatDate(job.date_posted, job.date_scraped);
+  const closingSoon = isClosingSoon(job.date_posted, job.date_scraped);
   const isRecruiter = job.source === "reed" || job.source === "cwjobs" || job.source === "totaljobs";
+  const isSelected = compareIds.has(job.id);
+  const canSelect = isSelected || compareIds.size < 3;
 
   const recruiterSearchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(
     `recruiter ${job.company} hiring ${job.title}`
   )}&origin=GLOBAL_SEARCH_HEADER`;
 
+  const companyResearch = companyResearchMap[job.id];
+
+  function handleCompanyIntelToggle() {
+    const next = !companyIntelOpen;
+    setCompanyIntelOpen(next);
+    if (next && !companyResearchMap[job.id]) {
+      onFetchCompanyResearch(job.id);
+    }
+  }
+
   return (
-    <div className={`bg-gray-900 border rounded-xl overflow-hidden transition-all ${
+    <div className={`bg-gray-900 border rounded-xl overflow-hidden transition-all relative group ${
       highlighted ? "border-emerald-600/60 shadow-lg shadow-emerald-950/30 ring-1 ring-emerald-600/20" :
       job.source === "manual" ? "border-purple-600/50 shadow-sm shadow-purple-950/20" :
       tracked ? "border-indigo-600/40 bg-indigo-950/10" :
@@ -120,6 +170,30 @@ function JobCard({
           <span className="text-[10px] text-indigo-400 font-medium">Tracking this application</span>
         </div>
       )}
+
+      {/* Compare checkbox — top-right, subtle */}
+      <div
+        className={`absolute top-3 right-3 z-10 transition-opacity ${
+          isSelected || compareIds.size > 0 ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={() => onToggleCompare(job.id)}
+          disabled={!canSelect}
+          title={isSelected ? "Remove from compare" : "Add to compare"}
+          className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
+            isSelected
+              ? "bg-indigo-600 border-indigo-500"
+              : canSelect
+                ? "border-gray-600 bg-gray-800 hover:border-indigo-400"
+                : "border-gray-700 bg-gray-800 opacity-40 cursor-not-allowed"
+          }`}
+        >
+          {isSelected && <CheckCircle2 size={10} className="text-white" />}
+        </button>
+      </div>
+
       {/* Main card row */}
       <div className="p-4 cursor-pointer" onClick={() => setExpanded((v) => !v)}>
         <div className="flex gap-3">
@@ -137,7 +211,7 @@ function JobCard({
           </div>
 
           {/* Main content */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 pr-6">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -179,6 +253,11 @@ function JobCard({
                 <span className="flex items-center gap-1 text-xs text-gray-600" title={date.full}>
                   <Clock size={11} />
                   {date.distance}
+                </span>
+              )}
+              {closingSoon && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/30 font-medium">
+                  ⚠ Closing soon
                 </span>
               )}
               <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SOURCE_COLORS[job.source] ?? "bg-gray-800 text-gray-400 border-gray-700"}`}>
@@ -231,6 +310,68 @@ function JobCard({
             </div>
           )}
 
+          {/* Company Intel collapsible */}
+          <div className="px-4 pt-3 pb-0">
+            <button
+              onClick={handleCompanyIntelToggle}
+              className="flex items-center gap-2 text-xs text-gray-400 hover:text-white transition-colors w-full"
+            >
+              <Building2 size={12} className="text-indigo-400" />
+              <span className="font-medium">Company Intel</span>
+              {companyIntelOpen ? <ChevronUp size={12} className="ml-auto" /> : <ChevronDown size={12} className="ml-auto" />}
+            </button>
+            {companyIntelOpen && (
+              <div className="mt-2 bg-gray-900 border border-gray-800 rounded-lg p-3 text-xs space-y-2">
+                {!companyResearch ? (
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <Loader2 size={12} className="animate-spin" /> Fetching company data…
+                  </div>
+                ) : companyResearch.error ? (
+                  <p className="text-red-400">{companyResearch.error}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {companyResearch.size && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-28 shrink-0">Size</span>
+                        <span className="text-gray-300">{companyResearch.size}</span>
+                      </div>
+                    )}
+                    {companyResearch.stage && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-28 shrink-0">Stage</span>
+                        <span className="text-gray-300">{companyResearch.stage}</span>
+                      </div>
+                    )}
+                    {companyResearch.known_for && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-28 shrink-0">Known for</span>
+                        <span className="text-gray-300">{companyResearch.known_for}</span>
+                      </div>
+                    )}
+                    {companyResearch.culture_notes && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-28 shrink-0">Culture</span>
+                        <span className="text-gray-300">{companyResearch.culture_notes}</span>
+                      </div>
+                    )}
+                    {companyResearch.red_flags && (
+                      <div className="flex gap-2">
+                        <span className="text-amber-500 w-28 shrink-0">Red flags</span>
+                        <span className="text-amber-300">{companyResearch.red_flags}</span>
+                      </div>
+                    )}
+                    {companyResearch.glassdoor_rating != null && (
+                      <div className="flex gap-2">
+                        <span className="text-gray-500 w-28 shrink-0">Glassdoor</span>
+                        <span className="text-emerald-400 font-medium">{companyResearch.glassdoor_rating} / 5</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Action buttons */}
           <div className="flex gap-2 flex-wrap p-4">
             <a
@@ -264,6 +405,24 @@ function JobCard({
             </button>
 
             <button
+              onClick={(e) => { e.stopPropagation(); onCoverLetter(job.id); }}
+              disabled={coverLettering}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs transition-colors disabled:opacity-50"
+            >
+              {coverLettering ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+              Cover Letter
+            </button>
+
+            <button
+              onClick={(e) => { e.stopPropagation(); onInterviewPrep(job.id); }}
+              disabled={interviewPrepping}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs transition-colors disabled:opacity-50"
+            >
+              {interviewPrepping ? <Loader2 size={12} className="animate-spin" /> : <BookOpen size={12} />}
+              Interview Prep
+            </button>
+
+            <button
               onClick={(e) => { e.stopPropagation(); onApply(job.id); }}
               disabled={applying || tracked}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
@@ -276,6 +435,26 @@ function JobCard({
               {tracked ? "Tracked" : "Track"}
             </button>
           </div>
+
+          {/* Private notes */}
+          <div className="px-4 pb-4">
+            <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wide mb-1.5">Private notes</p>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              onBlur={async () => {
+                try {
+                  await saveJobNotes(job.id, notes);
+                } catch {
+                  // silent fail — notes are best-effort
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              rows={3}
+              placeholder="Add private notes about this role…"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-300 placeholder-gray-600 outline-none focus:border-indigo-500 resize-none transition-colors"
+            />
+          </div>
         </div>
       )}
     </div>
@@ -285,6 +464,7 @@ function JobCard({
 export default function Jobs() {
   const qc = useQueryClient();
   const industryRef = useRef<HTMLDivElement>(null);
+  const saveSearchRef = useRef<HTMLDivElement>(null);
 
   const [filters, setFilters] = useState({
     salary_min: 90000,
@@ -307,10 +487,32 @@ export default function Jobs() {
   const [importStatus, setImportStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [lastImportedId, setLastImportedId] = useState<string | null>(null);
 
+  // Cover Letter
+  const [coverLetter, setCoverLetter] = useState<{ text: string; jobTitle: string } | null>(null);
+  const [coverLetteringId, setCoverLetteringId] = useState<string | null>(null);
+
+  // Interview Prep
+  const [interviewPrep, setInterviewPrep] = useState<{ questions: any[]; jobTitle: string } | null>(null);
+  const [interviewPreppingId, setInterviewPreppingId] = useState<string | null>(null);
+
+  // Company Research
+  const [companyResearchMap, setCompanyResearchMap] = useState<Record<string, any>>({});
+
+  // Compare
+  const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
+  const [showCompare, setShowCompare] = useState(false);
+
+  // Saved Search Profiles
+  const [showSaveSearch, setShowSaveSearch] = useState(false);
+  const [saveSearchName, setSaveSearchName] = useState("");
+
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (industryRef.current && !industryRef.current.contains(e.target as Node)) {
         setShowIndustryDropdown(false);
+      }
+      if (saveSearchRef.current && !saveSearchRef.current.contains(e.target as Node)) {
+        setShowSaveSearch(false);
       }
     }
     document.addEventListener("mousedown", handler);
@@ -323,7 +525,6 @@ export default function Jobs() {
         setSearchRunning(true);
         setSearchSources(["linkedin"]);
       } else {
-        // Auto-search if last run was more than 6 hours ago
         const SIX_HOURS = 6 * 60 * 60 * 1000;
         const lastRun = data.last_run ? new Date(data.last_run).getTime() : 0;
         if (Date.now() - lastRun > SIX_HOURS) {
@@ -367,6 +568,11 @@ export default function Jobs() {
     refetchInterval: searchRunning ? 3000 : false,
   });
 
+  const { data: searchProfiles = [] } = useQuery({
+    queryKey: ["search-profiles"],
+    queryFn: () => listSearchProfiles().then((r) => r.data),
+  });
+
   const { mutate: runSearch } = useMutation({
     mutationFn: (deep: boolean = false) => searchJobs({ deep }),
     onSuccess: () => { setSearchRunning(true); setSearchSources(["linkedin"]); },
@@ -379,7 +585,6 @@ export default function Jobs() {
       setImportStatus({ ok: true, msg: `Imported: ${data.data?.title || "job"} @ ${data.data?.company || ""} — scoring…` });
       setLastImportedId(data.data?.id ?? null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
-      // Re-fetch after 8s to pick up the background score
       setTimeout(() => {
         qc.invalidateQueries({ queryKey: ["jobs"] });
         setImportStatus({ ok: true, msg: `Imported: ${data.data?.title || "job"} @ ${data.data?.company || ""}` });
@@ -392,6 +597,20 @@ export default function Jobs() {
       setImportStatus({ ok: false, msg });
       setTimeout(() => setImportStatus(null), 8000);
     },
+  });
+
+  const { mutate: saveSearchProfile, isPending: savingProfile } = useMutation({
+    mutationFn: ({ name, f }: { name: string; f: object }) => createSearchProfile(name, f),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["search-profiles"] });
+      setSaveSearchName("");
+      setShowSaveSearch(false);
+    },
+  });
+
+  const { mutate: deleteProfile } = useMutation({
+    mutationFn: (id: string) => deleteSearchProfile(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["search-profiles"] }),
   });
 
   async function openLogs() {
@@ -425,6 +644,79 @@ export default function Jobs() {
     }
   }
 
+  async function handleCoverLetter(jobId: string) {
+    const job = (jobs as any[]).find((j: any) => j.id === jobId);
+    setCoverLetteringId(jobId);
+    try {
+      const { data } = await generateCoverLetter(jobId);
+      setCoverLetter({ text: data.cover_letter ?? data.text ?? JSON.stringify(data), jobTitle: job?.title ?? jobId });
+    } finally {
+      setCoverLetteringId(null);
+    }
+  }
+
+  async function handleInterviewPrep(jobId: string) {
+    const job = (jobs as any[]).find((j: any) => j.id === jobId);
+    setInterviewPreppingId(jobId);
+    try {
+      const { data } = await getInterviewPrep(jobId);
+      const questions = data.questions ?? data ?? [];
+      setInterviewPrep({ questions, jobTitle: job?.title ?? jobId });
+    } finally {
+      setInterviewPreppingId(null);
+    }
+  }
+
+  async function handleFetchCompanyResearch(jobId: string) {
+    // Mark as loading
+    setCompanyResearchMap((prev) => ({ ...prev, [jobId]: null }));
+    try {
+      const { data } = await getCompanyResearch(jobId);
+      setCompanyResearchMap((prev) => ({ ...prev, [jobId]: data }));
+    } catch (err: any) {
+      setCompanyResearchMap((prev) => ({
+        ...prev,
+        [jobId]: { error: err.response?.data?.detail || "Failed to load company data." },
+      }));
+    }
+  }
+
+  function toggleCompare(jobId: string) {
+    setCompareIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) {
+        next.delete(jobId);
+      } else if (next.size < 3) {
+        next.add(jobId);
+      }
+      return next;
+    });
+  }
+
+  function loadSearchProfile(profile: any) {
+    const f = profile.filters ?? {};
+    setFilters((prev) => ({
+      ...prev,
+      ...f,
+    }));
+    if (f.excluded_industries) setExcludedIndustries(f.excluded_industries);
+    if (f.source) setSource(f.source);
+    if (f.sort_by) setSortBy(f.sort_by);
+  }
+
+  function handleSaveSearch() {
+    if (!saveSearchName.trim()) return;
+    saveSearchProfile({
+      name: saveSearchName.trim(),
+      f: {
+        ...filters,
+        excluded_industries: excludedIndustries,
+        source,
+        sort_by: sortBy,
+      },
+    });
+  }
+
   const filtered = jobs
     .filter((j: any) => {
       if (source !== "all" && j.source !== source) return false;
@@ -436,11 +728,12 @@ export default function Jobs() {
       if (sortBy === "score") {
         return (b.compatibility_score ?? 0) - (a.compatibility_score ?? 0);
       }
-      // Sort by date_posted desc, then date_scraped desc
       const da = a.date_posted || a.date_scraped || "";
       const db_ = b.date_posted || b.date_scraped || "";
       return db_.localeCompare(da);
     });
+
+  const compareJobs = (jobs as any[]).filter((j: any) => compareIds.has(j.id));
 
   const toggleIndustry = (ind: string) =>
     setExcludedIndustries((prev) => prev.includes(ind) ? prev.filter((i) => i !== ind) : [...prev, ind]);
@@ -448,7 +741,7 @@ export default function Jobs() {
   const highMatch = filtered.filter((j: any) => (j.compatibility_score ?? 0) >= 70).length;
 
   return (
-    <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
+    <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4 pb-24">
 
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
@@ -539,6 +832,29 @@ export default function Jobs() {
         </div>
       )}
 
+      {/* Saved Search Profile chips */}
+      {(searchProfiles as any[]).length > 0 && (
+        <div className="flex flex-wrap gap-1.5 items-center">
+          <span className="text-[10px] text-gray-600 uppercase tracking-wide font-medium">Saved:</span>
+          {(searchProfiles as any[]).map((p: any) => (
+            <div key={p.id} className="flex items-center gap-0.5 bg-gray-800 border border-gray-700 rounded-full pl-2.5 pr-1 py-0.5">
+              <button
+                onClick={() => loadSearchProfile(p)}
+                className="text-[11px] text-gray-300 hover:text-white transition-colors"
+              >
+                {p.name}
+              </button>
+              <button
+                onClick={() => deleteProfile(p.id)}
+                className="ml-1 text-gray-600 hover:text-red-400 transition-colors"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Filters */}
       <div className="bg-gray-900/60 border border-gray-800 rounded-xl p-3 grid grid-cols-2 sm:flex sm:flex-wrap gap-2 items-center">
         <select
@@ -623,6 +939,39 @@ export default function Jobs() {
             </div>
           )}
         </div>
+
+        {/* Save search */}
+        <div ref={saveSearchRef} className="relative col-span-1">
+          <button
+            onClick={() => setShowSaveSearch((v) => !v)}
+            className="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs hover:border-indigo-500 transition-colors"
+            title="Save current search"
+          >
+            <Bookmark size={11} />
+            Save search
+          </button>
+          {showSaveSearch && (
+            <div className="absolute top-full mt-1 left-0 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl z-50 p-3 min-w-52">
+              <p className="text-[10px] text-gray-500 mb-2 font-medium uppercase tracking-wide">Name this search</p>
+              <input
+                autoFocus
+                type="text"
+                value={saveSearchName}
+                onChange={(e) => setSaveSearchName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSaveSearch(); }}
+                placeholder="e.g. Senior PM London"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-gray-600 outline-none focus:border-indigo-500 mb-2"
+              />
+              <button
+                onClick={handleSaveSearch}
+                disabled={savingProfile || !saveSearchName.trim()}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-xs py-1.5 rounded-lg transition-colors"
+              >
+                {savingProfile ? "Saving…" : "Save"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Job list */}
@@ -648,8 +997,29 @@ export default function Jobs() {
               applying={applyingId === job.id}
               highlighted={job.id === lastImportedId}
               tracked={trackedJobIds.has(job.id)}
+              onCoverLetter={handleCoverLetter}
+              coverLettering={coverLetteringId === job.id}
+              onInterviewPrep={handleInterviewPrep}
+              interviewPrepping={interviewPreppingId === job.id}
+              compareIds={compareIds}
+              onToggleCompare={toggleCompare}
+              companyResearchMap={companyResearchMap}
+              onFetchCompanyResearch={handleFetchCompanyResearch}
             />
           ))}
+        </div>
+      )}
+
+      {/* Sticky Compare button */}
+      {compareIds.size >= 2 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40">
+          <button
+            onClick={() => setShowCompare(true)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 px-5 py-2.5 rounded-full shadow-2xl text-sm font-medium transition-colors"
+          >
+            <Columns size={14} />
+            Compare ({compareIds.size})
+          </button>
         </div>
       )}
 
@@ -664,7 +1034,6 @@ export default function Jobs() {
             style={{ maxHeight: "min(85vh, 680px)" }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800 shrink-0">
               <div className="flex items-center gap-1 bg-gray-800/60 rounded-lg p-1">
                 <button
@@ -709,7 +1078,6 @@ export default function Jobs() {
               </div>
             </div>
 
-            {/* Body */}
             {logTab === "logs" ? (
               <div className="flex-1 overflow-auto p-4 font-mono text-[11px] space-y-px">
                 {logs.length === 0 ? (
@@ -732,7 +1100,6 @@ export default function Jobs() {
               </div>
             ) : (
               <div className="flex-1 overflow-auto p-5 space-y-5">
-                {/* Last search summary bar */}
                 {searchStatus?.last_run ? (
                   <div className="flex flex-wrap items-center gap-3 bg-gray-800/50 rounded-xl px-4 py-3">
                     <div>
@@ -754,7 +1121,6 @@ export default function Jobs() {
                   <p className="text-xs text-gray-600">Run a search to see stats here.</p>
                 )}
 
-                {/* Per-source grid */}
                 {searchStatus?.by_source && Object.keys(searchStatus.by_source).length > 0 && (
                   <div>
                     <p className="text-[10px] text-gray-500 font-medium uppercase tracking-widest mb-3">Jobs scraped per source</p>
@@ -791,7 +1157,6 @@ export default function Jobs() {
                   </div>
                 )}
 
-                {/* Search errors */}
                 {searchStatus?.errors?.length > 0 && (
                   <div className="bg-red-950/20 border border-red-800/30 rounded-xl p-4">
                     <p className="text-xs text-red-400 font-medium mb-2">Search errors</p>
@@ -801,7 +1166,6 @@ export default function Jobs() {
                   </div>
                 )}
 
-                {/* Tips */}
                 {searchStatus?.by_source && Object.values(searchStatus.by_source as Record<string, number>).some((v) => v === 0) && (
                   <div className="bg-amber-950/20 border border-amber-800/30 rounded-xl p-4 space-y-2">
                     <p className="text-xs text-amber-400 font-medium">Why some sources return 0 results</p>
@@ -843,6 +1207,153 @@ export default function Jobs() {
                 Copy to clipboard
               </button>
               <button onClick={() => setTweak(null)} className="text-sm bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cover Letter Modal */}
+      {coverLetter && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800">
+              <div>
+                <h3 className="font-semibold text-sm">Cover Letter</h3>
+                <p className="text-xs text-gray-500">{coverLetter.jobTitle}</p>
+              </div>
+              <button onClick={() => setCoverLetter(null)} className="text-gray-500 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+            <pre className="flex-1 overflow-auto p-4 text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">
+              {coverLetter.text}
+            </pre>
+            <div className="p-4 border-t border-gray-800 flex gap-2">
+              <button
+                onClick={() => navigator.clipboard.writeText(coverLetter.text)}
+                className="text-sm bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg"
+              >
+                Copy to clipboard
+              </button>
+              <button onClick={() => setCoverLetter(null)} className="text-sm bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interview Prep Modal */}
+      {interviewPrep && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-800">
+              <div>
+                <h3 className="font-semibold text-sm">Interview Prep</h3>
+                <p className="text-xs text-gray-500">{interviewPrep.jobTitle}</p>
+              </div>
+              <button onClick={() => setInterviewPrep(null)} className="text-gray-500 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 space-y-3">
+              {interviewPrep.questions.length === 0 ? (
+                <p className="text-gray-500 text-sm text-center py-8">No questions returned.</p>
+              ) : (
+                interviewPrep.questions.map((q: any, i: number) => {
+                  const typeLower = (q.type ?? "").toLowerCase();
+                  const typeColor = INTERVIEW_TYPE_COLORS[typeLower] ?? "bg-gray-500/20 text-gray-300 border-gray-500/30";
+                  return (
+                    <div key={i} className="bg-gray-800/60 border border-gray-700/60 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        {q.type && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium capitalize ${typeColor}`}>
+                            {q.type}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs font-semibold text-white leading-snug">{q.question}</p>
+                      {q.answer && (
+                        <p className="text-xs text-gray-400 leading-relaxed">{q.answer}</p>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-800">
+              <button onClick={() => setInterviewPrep(null)} className="text-sm bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Compare Modal */}
+      {showCompare && compareJobs.length >= 2 && (
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowCompare(false)}
+        >
+          <div
+            className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-4xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-gray-800 shrink-0">
+              <h3 className="font-semibold text-sm">Compare Jobs</h3>
+              <button onClick={() => setShowCompare(false)} className="text-gray-500 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <div className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${compareJobs.length}, 1fr)` }}>
+                {compareJobs.map((job: any) => (
+                  <div key={job.id} className="bg-gray-800/60 border border-gray-700/60 rounded-xl p-3 space-y-3">
+                    <div>
+                      <h4 className="font-semibold text-white text-sm leading-tight">{job.title}</h4>
+                      <p className="text-xs text-gray-400 mt-0.5">{job.company}</p>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-medium mb-0.5">Score</p>
+                        <ScoreBadge score={job.compatibility_score} />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-medium mb-0.5">Salary</p>
+                        <p className="text-emerald-400">{formatSalary(job.salary_min, job.salary_max) ?? "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-medium mb-0.5">Location</p>
+                        <p className="text-gray-300">{job.location ?? "—"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-medium mb-0.5">Source</p>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${SOURCE_COLORS[job.source] ?? "bg-gray-700 text-gray-400 border-gray-600"}`}>
+                          {job.source}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-medium mb-0.5">Key requirements</p>
+                        <p className="text-gray-400 leading-relaxed">
+                          {job.description ? job.description.slice(0, 300) + (job.description.length > 300 ? "…" : "") : "—"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="p-4 border-t border-gray-800 flex gap-2">
+              <button
+                onClick={() => { setCompareIds(new Set()); setShowCompare(false); }}
+                className="text-sm bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg"
+              >
+                Clear selection
+              </button>
+              <button onClick={() => setShowCompare(false)} className="text-sm bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg">
                 Close
               </button>
             </div>

@@ -16,3 +16,4 @@ class Application(Base):
     next_action_date = Column(DateTime)
     notes = Column(Text)
     cv_version = Column(Text)        # the tailored CV used for this application
+    outcome = Column(String, nullable=True)  # null | ghosted | rejected | offer | withdrawn

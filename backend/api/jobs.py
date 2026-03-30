@@ -150,6 +150,7 @@ async def list_jobs(
             "score_suggestion": suggestion,
             "is_active": job.is_active,
             "is_gaming": job.is_gaming,
+            "user_notes": job.user_notes,
         }
         jobs_out.append(d)
     return jobs_out
@@ -200,6 +201,33 @@ async def _score_imported(job_id: str, user_id: str):
         logger.warning("Failed to score imported job %s: %s", job_id, e)
 
 
+@router.post("/{job_id}/cover-letter")
+async def get_cover_letter(job_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    from backend.agents.cover_letter import generate_cover_letter
+    user_id = _user_id(request)
+    text = await generate_cover_letter(job_id, db, user_id)
+    return {"text": text}
+
+
+@router.post("/{job_id}/interview-prep")
+async def get_interview_prep(job_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    from backend.agents.interview_prep import generate_interview_prep
+    user_id = _user_id(request)
+    questions = await generate_interview_prep(job_id, db, user_id)
+    return {"questions": questions}
+
+
+@router.get("/{job_id}/company-research")
+async def company_research(job_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    from backend.agents.company_research import get_company_research
+    data = await get_company_research(job.company, job.title)
+    return data
+
+
 @router.get("/{job_id}")
 async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Job).where(Job.id == job_id))
@@ -207,6 +235,17 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.patch("/{job_id}/notes")
+async def update_job_notes(job_id: str, request: Request, body: dict, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Not found")
+    job.user_notes = body.get("notes", "")
+    await db.commit()
+    return {"status": "saved"}
 
 
 @router.post("/{job_id}/score")

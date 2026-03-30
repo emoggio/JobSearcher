@@ -1,6 +1,6 @@
 import { Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Briefcase, Users, Calendar, FileText, LayoutDashboard, MessageSquare, Zap, LogOut } from "lucide-react";
+import { Briefcase, Users, Calendar, FileText, LayoutDashboard, MessageSquare, Zap, LogOut, Settings2 } from "lucide-react";
 import { getHealth } from "./api";
 import Jobs from "./pages/Jobs";
 import Recruiters from "./pages/Recruiters";
@@ -11,6 +11,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Recover from "./pages/Recover";
 import Profile from "./pages/Profile";
+import Settings from "./pages/Settings";
 import FloatingChat from "./components/FloatingChat";
 
 const nav = [
@@ -20,6 +21,7 @@ const nav = [
   { to: "/calendar", label: "Calendar", icon: Calendar },
   { to: "/cv", label: "CV", icon: FileText },
   { to: "/profile", label: "Profile", icon: MessageSquare },
+  { to: "/settings", label: "Settings", icon: Settings2 },
 ];
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -129,6 +131,7 @@ function AppShell() {
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/cv" element={<CV />} />
           <Route path="/profile" element={<Profile />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
 

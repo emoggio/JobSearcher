@@ -89,3 +89,28 @@ export const saveProfileAnswers = (qa_pairs: { question: string; answer: string 
   api.post("/api/profile/save-answers", { qa_pairs });
 export const profileChat = (messages: { role: string; content: string }[]) =>
   api.post("/api/profile/chat", { messages });
+export const getSkillsGap = () => api.get("/api/profile/skills-gap");
+
+// Cover Letter
+export const generateCoverLetter = (jobId: string) => api.post(`/api/jobs/${jobId}/cover-letter`);
+
+// Interview Prep
+export const getInterviewPrep = (jobId: string) => api.post(`/api/jobs/${jobId}/interview-prep`);
+
+// Company Research
+export const getCompanyResearch = (jobId: string) => api.get(`/api/jobs/${jobId}/company-research`);
+
+// Job Notes
+export const saveJobNotes = (jobId: string, notes: string) =>
+  api.patch(`/api/jobs/${jobId}/notes`, { notes });
+
+// Search Profiles
+export const listSearchProfiles = () => api.get("/api/search-profiles");
+export const createSearchProfile = (name: string, filters: object) =>
+  api.post("/api/search-profiles", { name, filters });
+export const deleteSearchProfile = (id: string) => api.delete(`/api/search-profiles/${id}`);
+
+// Settings
+export const getSettings = () => api.get("/api/settings");
+export const saveLinkedinCookie = (cookie: string) =>
+  api.post("/api/settings/linkedin-cookie", { cookie });

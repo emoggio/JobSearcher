@@ -26,3 +26,4 @@ class Job(Base):
     score_suggestion = Column(String)     # one-line tailoring tip
     is_active = Column(Boolean, default=True)
     is_gaming = Column(Boolean, default=False)
+    user_notes = Column(Text, nullable=True)
