@@ -102,6 +102,7 @@ function JobCard({
   job, onApply, onTweak, tweaking, applying, highlighted, tracked,
   onCoverLetter, coverLettering,
   onInterviewPrep, interviewPrepping,
+  onScore, scoring,
   compareIds, onToggleCompare,
   companyResearchMap, onFetchCompanyResearch,
 }: {
@@ -116,6 +117,8 @@ function JobCard({
   coverLettering: boolean;
   onInterviewPrep: (id: string) => void;
   interviewPrepping: boolean;
+  onScore: (id: string) => void;
+  scoring: boolean;
   compareIds: Set<string>;
   onToggleCompare: (id: string) => void;
   companyResearchMap: Record<string, any>;
@@ -404,6 +407,17 @@ function JobCard({
               Tailor CV
             </button>
 
+            {job.compatibility_score == null && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onScore(job.id); }}
+                disabled={scoring}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-800/60 hover:bg-indigo-700/60 text-indigo-300 text-xs transition-colors border border-indigo-600/30 disabled:opacity-50"
+              >
+                {scoring ? <Loader2 size={12} className="animate-spin" /> : <Star size={12} />}
+                Score this job
+              </button>
+            )}
+
             <button
               onClick={(e) => { e.stopPropagation(); onCoverLetter(job.id); }}
               disabled={coverLettering}
@@ -483,6 +497,7 @@ export default function Jobs() {
   const [logTab, setLogTab] = useState<"logs" | "debug">("logs");
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [tweakingId, setTweakingId] = useState<string | null>(null);
+  const [scoringId, setScoringId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"score" | "date">("score");
   const [importStatus, setImportStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [lastImportedId, setLastImportedId] = useState<string | null>(null);
@@ -631,6 +646,16 @@ export default function Jobs() {
       qc.invalidateQueries({ queryKey: ["applications"] });
     } finally {
       setApplyingId(null);
+    }
+  }
+
+  async function handleScore(jobId: string) {
+    setScoringId(jobId);
+    try {
+      await api.post(`/api/jobs/${jobId}/score`);
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+    } finally {
+      setScoringId(null);
     }
   }
 
@@ -1001,6 +1026,8 @@ export default function Jobs() {
               coverLettering={coverLetteringId === job.id}
               onInterviewPrep={handleInterviewPrep}
               interviewPrepping={interviewPreppingId === job.id}
+              onScore={handleScore}
+              scoring={scoringId === job.id}
               compareIds={compareIds}
               onToggleCompare={toggleCompare}
               companyResearchMap={companyResearchMap}
